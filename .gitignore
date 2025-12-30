@@ -1,0 +1,23 @@
+.env
+.env.example
+
+# PyInstaller
+build/
+dist/
+build_onefile/
+*.spec
+*.exe
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
