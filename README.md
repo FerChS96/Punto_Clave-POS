@@ -1,6 +1,6 @@
-# HTF Gimnasio - Sistema POS
+# HTF Parroquia - Sistema POS
 
-Sistema de Punto de Venta completo para HTF Gimnasio con arquitectura híbrida PostgreSQL + Supabase, optimizado para pantallas táctiles.
+Sistema de Punto de Venta completo para HTF Parroquia con arquitectura híbrida PostgreSQL + Supabase, optimizado para pantallas táctiles.
 
 ## 🚀 Características Principales
 
@@ -22,11 +22,11 @@ Sistema de Punto de Venta completo para HTF Gimnasio con arquitectura híbrida P
 - ✅ Ubicaciones de almacenamiento
 - ✅ Búsqueda avanzada con filtros múltiples
 
-### 👥 Gestión de Miembros
-- ✅ Registro completo de miembros
+### 👥 Gestión de Feligreses
+- ✅ Registro completo de feligreses
 - ✅ Seguimiento de asistencias
 - ✅ Gestión de pagos y mensualidades
-- ✅ Historial de compras por miembro
+- ✅ Historial de compras por feligres
 - ✅ Escaneo de QR para entrada rápida
 - ✅ Monitor de entradas en tiempo real
 
@@ -57,7 +57,7 @@ Sistema de Punto de Venta completo para HTF Gimnasio con arquitectura híbrida P
 - ✅ **Supabase**: Sincronización con app móvil y gestión en la nube
 - ✅ Row Level Security (RLS) configurado
 - ✅ Triggers PostgreSQL para notificaciones en tiempo real
-- ✅ LISTEN/NOTIFY para entradas de miembros
+- ✅ LISTEN/NOTIFY para entradas de feligreses
 
 ## 📁 Estructura del Proyecto
 
@@ -66,7 +66,7 @@ POS_HTF/
 ├── main.py                          # Aplicación principal
 ├── requirements.txt                 # Dependencias Python
 ├── .env                            # Variables de entorno (Supabase, PostgreSQL)
-├── HTF_Gimnasio_POS.exe            # Ejecutable para Windows (85.65 MB)
+├── HTF_Parroquia_POS.exe            # Ejecutable para Windows (85.65 MB)
 │
 ├── database/
 │   ├── postgres_manager.py         # Gestor PostgreSQL principal
@@ -79,7 +79,7 @@ POS_HTF/
 │   ├── inventario_window.py        # Gestión de inventario
 │   ├── nuevo_producto_window.py    # Formulario de productos
 │   ├── movimiento_inventario_window.py
-│   ├── miembros_window.py          # Gestión de miembros
+│   ├── miembros_window.py          # Gestión de feligreses
 │   ├── asignacion_turnos_window.py # Turnos de caja
 │   ├── notificaciones_pago_window.py
 │   ├── confirmar_pago_efectivo_dialog.py
@@ -119,7 +119,7 @@ Crea un archivo `.env` con:
 # PostgreSQL Local
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
-POSTGRES_DB=htf_gimnasio
+POSTGRES_DB=htf_parroquia
 POSTGRES_USER=tu_usuario
 POSTGRES_PASSWORD=tu_password
 
@@ -138,7 +138,7 @@ python main.py
 
 **Producción (Ejecutable):**
 ```bash
-dist\HTF_Gimnasio_POS.exe
+dist\HTF_Parroquia_POS.exe
 ```
 
 ### 4. Generar Ejecutable
@@ -204,7 +204,7 @@ precio = TouchMoneyInput(
 - **Sistema de Diseño**: Windows Phone inspired
 
 ### Funcionalidades Avanzadas
-- 🔔 **Notificaciones en tiempo real** de entradas de miembros
+- 🔔 **Notificaciones en tiempo real** de entradas de feligreses
 - 💳 **Edge Functions** para confirmar pagos en efectivo
 - 📊 **Reportes** de ventas, inventario y caja
 - 🔐 **Seguridad** con RLS y validación de permisos
@@ -228,7 +228,7 @@ precio = TouchMoneyInput(
 
 ## 📦 Distribución
 
-El ejecutable `HTF_Gimnasio_POS.exe` incluye:
+El ejecutable `HTF_Parroquia_POS.exe` incluye:
 - ✅ Todas las dependencias empaquetadas
 - ✅ PySide6 (Qt6) embebido
 - ✅ PostgreSQL driver (psycopg2)
@@ -251,9 +251,9 @@ Este proyecto está en constante evolución. Las áreas de desarrollo futuro inc
 
 ## 📄 Licencia
 
-Proyecto privado para Gimnasio HTF.
+Proyecto privado para Parroquia HTF.
 
 ---
 
-**Diseñado y desarrollado con ❤️ para Gimnasio HTF**  
+**Diseñado y desarrollado con ❤️ para Parroquia HTF**
 Sistema POS moderno, táctil y completamente funcional.
