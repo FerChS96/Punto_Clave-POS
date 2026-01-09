@@ -42,10 +42,9 @@ class NuevaVentaWindow(QWidget):
     venta_completada = Signal(dict)
     cerrar_solicitado = Signal()
     
-    def __init__(self, pg_manager, supabase_service, user_data, parent=None):
+    def __init__(self, pg_manager, user_data, parent=None):
         super().__init__(parent)
         self.pg_manager = pg_manager
-        self.supabase_service = supabase_service
         self.user_data = user_data
         self.venta_id = None  # Initialize 'venta_id'
         
@@ -403,11 +402,11 @@ class VentasDiaWindow(QWidget):
     
     cerrar_solicitado = Signal()
     
-    def __init__(self, pg_manager, supabase_service, user_data, parent=None):
+    def __init__(self, pg_manager, user_data, turno_id=None, parent=None):
         super().__init__(parent)
         self.pg_manager = pg_manager
-        self.supabase_service = supabase_service
         self.user_data = user_data
+        self.turno_id = turno_id
         
         # Configurar política de tamaño
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -422,7 +421,7 @@ class VentasDiaWindow(QWidget):
         
         # Contenido
         content = QWidget()
-        content_layout = create_page_layout("RESUMEN DE VENTAS - " + date.today().strftime("%d/%m/%Y"))
+        content_layout = create_page_layout("")
         content.setLayout(content_layout)
         
         # Widgets de resumen
@@ -500,18 +499,20 @@ class VentasDiaWindow(QWidget):
     def actualizar_datos(self):
         """Actualizar datos de ventas del día"""
         try:
-            # Obtener ventas del día usando Supabase
+            # Obtener ventas del día usando PostgreSQL
             from datetime import date
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).gte('fecha', f'{date.today()}T00:00:00').lte(
-                'fecha', f'{date.today()}T23:59:59'
-            ).order('fecha', desc=True).execute()
-            
-            ventas = response.data or []
+            hoy = date.today()
+            ventas = self.pg_manager.query(
+                """SELECT v.id_venta, v.fecha, v.total, u.nombre_completo
+                   FROM ventas v
+                   JOIN usuarios u ON v.id_usuario = u.id_usuario
+                   WHERE DATE(v.fecha) = %s
+                   ORDER BY v.fecha DESC""",
+                (hoy,)
+            )
             
             # Calcular resumen
-            total_vendido = sum(v.get('total', 0) for v in ventas)
+            total_vendido = sum(v[2] for v in ventas if v[2] is not None)
             num_ventas = len(ventas)
             promedio = total_vendido / num_ventas if num_ventas > 0 else 0
             
@@ -556,10 +557,9 @@ class HistorialVentasWindow(QWidget):
     
     cerrar_solicitado = Signal()
     
-    def __init__(self, pg_manager, supabase_service, user_data, parent=None):
+    def __init__(self, pg_manager, user_data, parent=None):
         super().__init__(parent)
         self.pg_manager = pg_manager
-        self.supabase_service = supabase_service
         self.user_data = user_data
         
         # Configurar política de tamaño
@@ -652,41 +652,54 @@ class HistorialVentasWindow(QWidget):
             fecha_desde = self.fecha_desde.date().toPython()
             fecha_hasta = self.fecha_hasta.date().toPython()
             
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).gte('fecha', f'{fecha_desde}T00:00:00').lte(
-                'fecha', f'{fecha_hasta}T23:59:59'
-            ).order('fecha', desc=True).execute()
-            
-            ventas = response.data or []
+            # Usar PostgreSQL en lugar de Supabase
+            ventas = self.pg_manager.query("""
+                SELECT v.id_venta, v.fecha, v.total, u.nombre_completo
+                FROM ventas v
+                LEFT JOIN usuarios u ON v.id_vendedor = u.id_usuario
+                WHERE DATE(v.fecha) >= %s AND DATE(v.fecha) <= %s
+                ORDER BY v.fecha DESC
+            """, (fecha_desde, fecha_hasta)) or []
             
             self.history_table.setRowCount(len(ventas))
             
             for row, venta in enumerate(ventas):
+                # Extraer valores según si es tuple o dict
+                venta_id = venta[0] if isinstance(venta, tuple) else venta['id_venta']
+                fecha = venta[1] if isinstance(venta, tuple) else venta['fecha']
+                total = venta[2] if isinstance(venta, tuple) else venta['total']
+                nombre_completo = venta[3] if isinstance(venta, tuple) else venta['nombre_completo']
+                
                 # ID
-                self.history_table.setItem(row, 0, QTableWidgetItem(str(venta['id_venta'])))
+                self.history_table.setItem(row, 0, QTableWidgetItem(str(venta_id)))
                 
                 # Fecha
-                fecha = venta['fecha'].strftime("%d/%m/%Y") if isinstance(venta['fecha'], datetime) else str(venta['fecha'])
-                self.history_table.setItem(row, 1, QTableWidgetItem(fecha))
+                if isinstance(fecha, datetime):
+                    fecha_str = fecha.strftime("%d/%m/%Y")
+                else:
+                    fecha_str = str(fecha)
+                self.history_table.setItem(row, 1, QTableWidgetItem(fecha_str))
                 
                 # Hora
-                hora = venta['fecha'].strftime("%H:%M") if isinstance(venta['fecha'], datetime) else "N/A"
-                self.history_table.setItem(row, 2, QTableWidgetItem(hora))
+                if isinstance(fecha, datetime):
+                    hora_str = fecha.strftime("%H:%M")
+                else:
+                    hora_str = "N/A"
+                self.history_table.setItem(row, 2, QTableWidgetItem(hora_str))
                 
                 # Total
-                total_item = QTableWidgetItem(f"${venta['total']:.2f}")
+                total_item = QTableWidgetItem(f"${float(total):.2f}")
                 total_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.history_table.setItem(row, 3, total_item)
                 
                 # Usuario
-                self.history_table.setItem(row, 4, QTableWidgetItem(venta.get('usuario', 'N/A')))
+                self.history_table.setItem(row, 4, QTableWidgetItem(nombre_completo or 'N/A'))
                 
                 # Botón detalles
                 btn_detalles = QPushButton("Ver")
                 btn_detalles.setObjectName("tileButton")
                 btn_detalles.setProperty("tileColor", WindowsPhoneTheme.TILE_BLUE)
-                btn_detalles.clicked.connect(lambda checked, vid=venta['id_venta']: self.ver_detalles(vid))
+                btn_detalles.clicked.connect(lambda checked, vid=venta_id: self.ver_detalles(vid))
                 self.history_table.setCellWidget(row, 5, btn_detalles)
         
         except Exception as e:
@@ -708,10 +721,9 @@ class CierreCajaWindow(QWidget):
     
     cerrar_solicitado = Signal()
     
-    def __init__(self, pg_manager, supabase_service, user_data, parent=None):
+    def __init__(self, pg_manager, user_data, parent=None):
         super().__init__(parent)
         self.pg_manager = pg_manager
-        self.supabase_service = supabase_service
         self.user_data = user_data
         self.turno_abierto = None
         
@@ -727,14 +739,9 @@ class CierreCajaWindow(QWidget):
     def verificar_turno_abierto(self):
         """Verificar si el usuario tiene un turno abierto"""
         try:
-            response = self.pg_manager.client.table('turnos_caja').select(
-                'id_turno, monto_inicial, fecha_apertura'
-            ).eq('id_usuario', self.user_data['id_usuario']).eq(
-                'cerrado', False
-            ).order('fecha_apertura', desc=True).limit(1).execute()
-            
-            if response.data and len(response.data) > 0:
-                self.turno_abierto = response.data[0]
+            turno = self.pg_manager.get_turno_activo(self.user_data['id_usuario'])
+            if turno:
+                self.turno_abierto = turno
                 return True
             return False
                 
@@ -944,16 +951,18 @@ class CierreCajaWindow(QWidget):
     def cargar_resumen(self):
         """Cargar resumen del día"""
         try:
-            # Obtener ventas del día usando Supabase
+            # Obtener ventas del día usando PostgreSQL
             from datetime import date
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).gte('fecha', f'{date.today()}T00:00:00').lte(
-                'fecha', f'{date.today()}T23:59:59'
-            ).order('fecha', desc=True).execute()
+            hoy = date.today()
+            ventas = self.pg_manager.query(
+                """SELECT v.id_venta, v.fecha, v.total
+                   FROM ventas v
+                   WHERE DATE(v.fecha) = %s
+                   ORDER BY v.fecha DESC""",
+                (hoy,)
+            )
             
-            ventas = response.data or []
-            total_esperado = sum(v.get('total', 0) for v in ventas)
+            total_esperado = sum(v[2] for v in ventas if v[2] is not None)
             num_ventas = len(ventas)
             
             # Actualizar widgets
@@ -1165,17 +1174,11 @@ class CierreCajaWindow(QWidget):
                     )
                     notas_cierre = (notas_cierre + auth_info) if notas_cierre else auth_info.strip()
                 
-                # Actualizar turno existente
-                from datetime import datetime
-                self.pg_manager.client.table('turnos_caja').update({
-                    'fecha_cierre': datetime.now().isoformat(),
-                    'total_ventas_efectivo': cierre_data['total_esperado'],
-                    'monto_esperado': float(self.turno_abierto['monto_inicial']) + cierre_data['total_esperado'],
-                    'monto_real_cierre': cierre_data['total_contado'],
-                    'diferencia': cierre_data['diferencia'],
-                    'cerrado': True,
-                    'notas_apertura': (self.turno_abierto.get('notas_apertura', '') or '') + ('\n' + notas_cierre if self.turno_abierto.get('notas_apertura') else notas_cierre)
-                }).eq('id_turno', self.turno_abierto['id_turno']).execute()
+                # Actualizar turno existente usando PostgreSQL
+                self.pg_manager.cerrar_turno_caja(
+                    self.turno_abierto['id_turno'],
+                    cierre_data['total_contado']
+                )
                 
                 show_success_dialog(self, "Cierre Completado", "Cierre de caja registrado exitosamente.")
                 self.cerrar_solicitado.emit()

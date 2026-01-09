@@ -8,6 +8,13 @@ import sys
 import os
 import logging
 
+# CONFIGURACIÓN PARA SUPRIMIR ERRORES DE FUENTES ANTES DE CUALQUIER IMPORTACIÓN
+# Deshabilitar completamente errores de DirectWrite y logging de fuentes
+os.environ['QT_LOGGING_RULES'] = 'qt.qpa.fonts=false;qt.qpa.fonts.directwrite=false;*.debug=false'
+os.environ['QT_DEBUG_PLUGINS'] = '0'
+# Forzar el uso del backend de fuentes de Windows en lugar de DirectWrite
+os.environ['QT_QPA_PLATFORM'] = 'windows'
+
 # CONFIGURACIÓN DE LOGGING ANTES DE CUALQUIER OTRO IMPORT
 _handlers = []
 _console_stream = getattr(sys, 'stdout', None)
@@ -23,7 +30,6 @@ logging.basicConfig(
 
 # SUPRIMIR LOGS VERBOSOS DE LIBRERÍAS EXTERNAS ANTES DE IMPORTARLAS
 logging.getLogger('httpx').setLevel(logging.WARNING)
-logging.getLogger('supabase').setLevel(logging.WARNING)
 logging.getLogger('websockets').setLevel(logging.WARNING)
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
@@ -63,7 +69,6 @@ try:
     from ui.main_pos_window import MainPOSWindow
     from ui.abrir_turno_dialog import AbrirTurnoDialog
     from database.postgres_manager import PostgresManager
-    from services.supabase_service import SupabaseService
     from utils.config import Config
     from ui.components import show_warning_dialog, show_confirmation_dialog
 except ImportError as e:
@@ -85,25 +90,75 @@ class POSApplication:
             self.app = QApplication(sys.argv)
             self.app.setApplicationName("POS HTF Gimnasio")
             
+            # CONFIGURACIÓN DE FUENTES PARA EVITAR ERRORES DE DIRECTWRITE
+            # Configurar fuentes seguras para evitar problemas con fuentes corruptas del sistema
+            try:
+                from PySide6.QtGui import QFont
+                
+                # SUPRIMIR COMPLETAMENTE LOS ERRORES DE FUENTES ANTES DE CUALQUIER OPERACIÓN QT
+                import os
+                # Configurar variables de entorno para silenciar completamente errores de DirectWrite
+                os.environ['QT_LOGGING_RULES'] = 'qt.qpa.fonts=false;qt.qpa.fonts.directwrite=false;*.debug=false'
+                # Deshabilitar completamente el logging de Qt para fuentes
+                os.environ['QT_DEBUG_PLUGINS'] = '0'
+                
+                # Lista de fuentes seguras en orden de preferencia
+                safe_fonts = [
+                    ("Segoe UI", 10),      # Fuente moderna de Windows
+                    ("Arial", 10),         # Fuente clásica y confiable
+                    ("Tahoma", 10),        # Fuente de Windows antigua pero segura
+                    ("Verdana", 10),       # Fuente sans-serif clara
+                    ("Helvetica", 10),     # Fuente estándar
+                ]
+                
+                font_configured = False
+                for font_name, font_size in safe_fonts:
+                    try:
+                        font = QFont(font_name, font_size)
+                        # Verificar si la fuente existe creando un QLabel de prueba
+                        from PySide6.QtWidgets import QLabel
+                        test_label = QLabel("Test")
+                        test_label.setFont(font)
+                        
+                        # Si no hay excepciones, la fuente es segura
+                        self.app.setFont(font)
+                        logging.info(f"Fuente configurada exitosamente: {font_name}")
+                        font_configured = True
+                        break
+                        
+                    except Exception as e:
+                        logging.debug(f"Error probando fuente {font_name}: {e}")
+                        continue
+                
+                if not font_configured:
+                    logging.warning("No se pudo configurar ninguna fuente segura, usando configuración por defecto")
+                
+            except Exception as font_error:
+                logging.warning(f"No se pudo configurar fuente personalizada: {font_error}")
+                # Continuar sin configuración especial de fuentes
+            
             # Inicializar configuración
             self.config = Config()
             
-            # Inicializar servicios
+            # Inicializar PostgreSQL
             try:
                 db_config = self.config.get_postgres_config()
                 self.postgres_manager = PostgresManager(db_config)
                 if not self.postgres_manager.initialize_database():
-                    logging.warning("Advertencia: BD no disponible, continuando en modo offline")
-                    self.postgres_manager = None
+                    logging.error("Error crítico: No se pudo conectar a la base de datos PostgreSQL")
+                    raise Exception("BD no disponible")
             except Exception as e:
-                logging.warning(f"Advertencia inicializando BD: {e}")
-                self.postgres_manager = None
-            
-            try:
-                self.supabase_service = SupabaseService()
-            except Exception as e:
-                logging.warning(f"Advertencia inicializando Supabase: {e}")
-                self.supabase_service = None
+                logging.error(f"Error fatal inicializando BD: {e}")
+                QMessageBox.critical(
+                    None, 
+                    "Error de Conexión",
+                    f"No se pudo conectar a PostgreSQL:\n{e}\n\n"
+                    f"Verifica que:\n"
+                    f"1. PostgreSQL esté ejecutándose\n"
+                    f"2. La base de datos 'pos_sivp' exista\n"
+                    f"3. Las credenciales en .env sean correctas"
+                )
+                sys.exit(1)
             
             # Variable para usuario actual
             self.current_user = None
@@ -124,7 +179,7 @@ class POSApplication:
     def show_login(self):
         """Mostrar ventana de login"""
         try:
-            login_window = LoginWindow(self.postgres_manager, self.supabase_service)
+            login_window = LoginWindow(self.postgres_manager)
             login_window.login_success.connect(self.on_login_success)
             login_window.show()
             
@@ -173,16 +228,11 @@ class POSApplication:
     def verificar_turno_abierto(self):
         """Verificar si el usuario tiene un turno abierto"""
         try:
-            if not self.postgres_manager:
+            if not self.postgres_manager or not self.current_user:
                 return None
                 
-            response = self.postgres_manager.client.table('turnos_caja').select(
-                'id_turno, fecha_apertura, monto_inicial'
-            ).eq('id_usuario', self.current_user['id_usuario']).eq('cerrado', False).execute()
-            
-            if response.data and len(response.data) > 0:
-                return response.data[0]
-            return None
+            turno = self.postgres_manager.get_turno_activo(self.current_user['id_usuario'])
+            return turno
             
         except Exception as e:
             logging.error(f"Error verificando turno abierto: {e}")
@@ -194,7 +244,6 @@ class POSApplication:
             self.main_window = MainPOSWindow(
                 self.current_user,
                 self.postgres_manager,
-                self.supabase_service,
                 self.turno_id  # Pasar ID del turno activo
             )
             self.main_window.logout_requested.connect(self.on_logout)
@@ -242,13 +291,16 @@ class POSApplication:
             if not self.postgres_manager or not self.turno_id:
                 return None
                 
-            response = self.postgres_manager.client.table('turnos_caja').select(
-                'id_turno, fecha_apertura, monto_inicial, cerrado'
-            ).eq('id_turno', self.turno_id).execute()
-            
-            if response.data and len(response.data) > 0:
-                return response.data[0]
-            return None
+            # Obtener turno directamente con PostgreSQL
+            with self.postgres_manager.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id_turno, numero_turno, fecha_apertura, monto_inicial, cerrado
+                    FROM turnos_caja
+                    WHERE id_turno = %s
+                """, (self.turno_id,))
+                
+                result = cursor.fetchone()
+                return dict(result) if result else None
             
         except Exception as e:
             logging.error(f"Error verificando estado del turno: {e}")

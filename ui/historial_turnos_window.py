@@ -55,9 +55,9 @@ class HistorialTurnosWindow(QWidget):
                                  WindowsPhoneTheme.MARGIN_MEDIUM)
         layout.setSpacing(WindowsPhoneTheme.MARGIN_SMALL)
         
-        # Título
-        title = SectionTitle("HISTORIAL DE TURNOS")
-        layout.addWidget(title)
+        # El título viene del TopBar, no duplicar aquí
+        # title = SectionTitle("")
+        # layout.addWidget(title)
         
         # Panel de filtros
         filters_panel = self.create_filters_panel()
@@ -303,19 +303,48 @@ class HistorialTurnosWindow(QWidget):
     def cargar_turnos(self):
         """Cargar turnos desde la base de datos"""
         try:
-            response = self.pg_manager.client.table('turnos_caja').select(
-                '*, usuarios(nombre_completo)'
-            ).order('fecha_apertura', desc=True).execute()
+            # Obtener turnos usando PostgreSQL
+            turnos = self.pg_manager.query("""
+                SELECT 
+                    tc.id_turno,
+                    tc.numero_turno,
+                    tc.fecha_apertura,
+                    tc.fecha_cierre,
+                    tc.monto_inicial,
+                    tc.monto_esperado_efectivo,
+                    tc.monto_real_efectivo,
+                    tc.diferencia_efectivo,
+                    tc.cerrado,
+                    u.nombre_completo as nombre_usuario,
+                    u.nombre_usuario as username
+                FROM turnos_caja tc
+                LEFT JOIN usuarios u ON tc.id_usuario = u.id_usuario
+                ORDER BY tc.fecha_apertura DESC
+            """) or []
             
-            # Procesar datos para tener nombre_usuario disponible
+            # Procesar datos
             self.turnos_data = []
-            for turno in (response.data or []):
-                # Extraer nombre del usuario del objeto anidado
-                if 'usuarios' in turno and turno['usuarios']:
-                    turno['nombre_usuario'] = turno['usuarios'].get('nombre_completo', 'N/A')
+            for turno in turnos:
+                # Convertir tuple/dict to dict
+                if isinstance(turno, tuple):
+                    turno_dict = {
+                        'id_turno': turno[0],
+                        'numero_turno': turno[1],
+                        'fecha_apertura': turno[2],
+                        'fecha_cierre': turno[3],
+                        'monto_inicial': turno[4],
+                        'monto_esperado_efectivo': turno[5],
+                        'monto_real_efectivo': turno[6],
+                        'diferencia_efectivo': turno[7],
+                        'cerrado': turno[8],
+                        'nombre_usuario': turno[9] or 'N/A',
+                        'username': turno[10]
+                    }
                 else:
-                    turno['nombre_usuario'] = 'N/A'
-                self.turnos_data.append(turno)
+                    turno_dict = turno
+                    turno_dict['nombre_usuario'] = turno.get('nombre_usuario') or 'N/A'
+                
+                self.turnos_data.append(turno_dict)
             
             self.aplicar_filtros()
                 

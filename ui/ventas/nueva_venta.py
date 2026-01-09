@@ -46,10 +46,9 @@ class NuevaVentaWindow(QWidget):
     venta_completada = Signal(dict)
     cerrar_solicitado = Signal()
     
-    def __init__(self, pg_manager, supabase_service, user_data, turno_id=None, parent=None):
+    def __init__(self, pg_manager, user_data, turno_id=None, parent=None):
         super().__init__(parent)
         self.pg_manager = pg_manager
-        self.supabase_service = supabase_service
         self.user_data = user_data
         self.turno_id = turno_id  # ID del turno de caja actual
         self.codigo = ""  # Initialize 'codigo' as an empty string
@@ -76,6 +75,11 @@ class NuevaVentaWindow(QWidget):
         self.setup_ui()
 
         # Verificar turno al cargar y bloquear si no hay
+        if not self.turno_id:
+            # Intentar obtener turno activo de la base de datos
+            self.verificar_turno_abierto()
+        
+        # Si aún no hay turno, deshabilitar ventas
         if not self.turno_id:
             self.deshabilitar_ventas()
 
@@ -173,8 +177,8 @@ class NuevaVentaWindow(QWidget):
 
         layout.addWidget(self.productos_table, 1)
 
-        # No cargar productos automáticamente - mostrar mensaje de búsqueda
-        self.mostrar_mensaje_busqueda()
+        # Cargar productos automáticamente ordenados por ID
+        self.buscar_productos()
 
         total_tile = InfoTile("TOTAL A PAGAR", None, WindowsPhoneTheme.TILE_GREEN)
         total_tile.main_layout.insertStretch(0)
@@ -529,18 +533,18 @@ class NuevaVentaWindow(QWidget):
             )
     
     def buscar_productos(self):
-        """Buscar productos por texto"""
+        """Buscar productos por texto o listar todos si vacío"""
         texto = self.search_bar.text().strip()
-        if not texto:
-            self.mostrar_mensaje_busqueda()
-            return
             
         try:
             productos = self.pg_manager.search_products(texto)
             self.productos_table.setRowCount(len(productos))
             
             for row, producto in enumerate(productos):
-                self.productos_table.setItem(row, 0, QTableWidgetItem(producto['codigo_barras'] or f"P{producto['id_producto']:04d}"))
+                codigo_item = QTableWidgetItem(producto['codigo_barras'] or f"P{producto['id_producto']:04d}")
+                codigo_item.setData(Qt.UserRole, producto['id_producto'])
+                codigo_item.setData(Qt.UserRole + 1, producto['stock_actual'])
+                self.productos_table.setItem(row, 0, codigo_item)
                 self.productos_table.setItem(row, 1, QTableWidgetItem(producto['nombre']))
                 
                 precio = float(producto['precio_venta']) if producto['precio_venta'] is not None else 0.0
@@ -548,7 +552,9 @@ class NuevaVentaWindow(QWidget):
                 precio_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.productos_table.setItem(row, 2, precio_item)
                 
-                stock_item = QTableWidgetItem(str(producto['stock_actual']))
+                cantidad_en_carrito = sum(item['cantidad'] for item in self.carrito if item['id_producto'] == producto['id_producto'])
+                stock_disponible = producto['stock_actual'] - cantidad_en_carrito
+                stock_item = QTableWidgetItem(str(stock_disponible))
                 stock_item.setTextAlignment(Qt.AlignCenter)
                 self.productos_table.setItem(row, 3, stock_item)
                 
@@ -561,7 +567,11 @@ class NuevaVentaWindow(QWidget):
             
     def agregar_al_carrito(self, producto):
         """Agregar producto al carrito"""
-        if producto['stock_actual'] <= 0:
+        # Calcular stock disponible considerando el carrito actual
+        cantidad_en_carrito = sum(item['cantidad'] for item in self.carrito if item['id_producto'] == producto['id_producto'])
+        stock_disponible = producto['stock_actual'] - cantidad_en_carrito
+        
+        if stock_disponible <= 0:
             show_warning_dialog(self, "Sin Stock", f"El producto '{producto['nombre']}' no tiene stock disponible.")
             return
         
@@ -571,11 +581,11 @@ class NuevaVentaWindow(QWidget):
         # Verificar si ya está en el carrito
         for item in self.carrito:
             if item['id_producto'] == producto['id_producto']:
-                if item['cantidad'] < producto['stock_actual']:
+                if item['cantidad'] < stock_disponible + item['cantidad']:  # Ya que stock_disponible es el restante
                     item['cantidad'] += 1
                     item['subtotal'] = item['cantidad'] * item['precio']
                 else:
-                    show_warning_dialog(self, "Stock Insuficiente", f"Solo hay {producto['stock_actual']} unidades disponibles.")
+                    show_warning_dialog(self, "Stock Insuficiente", f"Solo hay {stock_disponible} unidades disponibles.")
                     return
                 break
         else:
@@ -629,6 +639,20 @@ class NuevaVentaWindow(QWidget):
         # Actualizar total
         self.total_label.setText(f"${self.total_venta:.2f}")
         
+        # Actualizar stocks en la tabla de productos
+        self.actualizar_stocks_tabla()
+        
+    def actualizar_stocks_tabla(self):
+        """Actualizar los stocks mostrados en la tabla de productos sin recargar desde DB"""
+        for row in range(self.productos_table.rowCount()):
+            item = self.productos_table.item(row, 0)
+            if item:
+                id_prod = item.data(Qt.UserRole)
+                stock_actual = item.data(Qt.UserRole + 1)
+                cantidad_en_carrito = sum(item_carrito['cantidad'] for item_carrito in self.carrito if item_carrito['id_producto'] == id_prod)
+                stock_disponible = stock_actual - cantidad_en_carrito
+                self.productos_table.item(row, 3).setText(str(stock_disponible))
+        
     def cambiar_cantidad(self, index, nueva_cantidad):
         """Cambiar cantidad de un item del carrito"""
         if 0 <= index < len(self.carrito):
@@ -666,18 +690,13 @@ class NuevaVentaWindow(QWidget):
     def verificar_turno_abierto(self):
         """Verificar que haya un turno abierto consultando la base de datos"""
         try:
-            # Consultar el último turno en la tabla
-            response = self.pg_manager.client.table('turnos_caja').select(
-                'id_turno, cerrado, fecha_apertura'
-            ).order('fecha_apertura', desc=True).limit(1).execute()
+            # Usar el método get_turno_activo de PostgreSQL
+            turno = self.pg_manager.get_turno_activo(self.user_data['id_usuario'])
             
-            if response.data and len(response.data) > 0:
-                ultimo_turno = response.data[0]
-                # Verificar si está abierto (cerrado = false)
-                if not ultimo_turno.get('cerrado', True):
-                    # Actualizar turno_id con el turno actualmente abierto
-                    self.turno_id = ultimo_turno['id_turno']
-                    return True
+            if turno and not turno.get('cerrado', True):
+                # Actualizar turno_id con el turno actualmente abierto
+                self.turno_id = turno['id_turno']
+                return True
             
             # No hay turno abierto
             return False

@@ -33,10 +33,9 @@ class InventarioWindow(QWidget):
     
     cerrar_solicitado = Signal()
     
-    def __init__(self, postgres_manager, supabase_service, user_data, parent=None):
+    def __init__(self, postgres_manager, user_data, parent=None):
         super().__init__(parent)
         self.pg_manager = postgres_manager  # Cambiado de db_manager a pg_manager
-        self.supabase_service = supabase_service
         self.user_data = user_data
         self.productos_data = []
         
@@ -57,7 +56,7 @@ class InventarioWindow(QWidget):
         
         # Contenido
         content = QWidget()
-        content_layout = create_page_layout("INVENTARIO COMPLETO")
+        content_layout = create_page_layout("")
         content.setLayout(content_layout)
         
         # Buscador
@@ -86,24 +85,6 @@ class InventarioWindow(QWidget):
         categoria_layout.addWidget(self.categoria_combo)
         
         filters_layout.addWidget(categoria_container, stretch=1)
-        
-        # Filtro por tipo de producto
-        tipo_container = QWidget()
-        tipo_layout = QVBoxLayout(tipo_container)
-        tipo_layout.setContentsMargins(0, 0, 0, 0)
-        tipo_layout.setSpacing(4)
-        
-        tipo_label = StyledLabel("Tipo:", size=WindowsPhoneTheme.FONT_SIZE_SMALL)
-        tipo_layout.addWidget(tipo_label)
-        
-        self.tipo_combo = QComboBox()
-        self.tipo_combo.addItems(["Todos", "Producto Varios", "Suplemento"])
-        self.tipo_combo.setMinimumHeight(40)
-        self.tipo_combo.setFont(QFont(WindowsPhoneTheme.FONT_FAMILY, WindowsPhoneTheme.FONT_SIZE_NORMAL))
-        self.tipo_combo.currentTextChanged.connect(self.aplicar_filtros)
-        tipo_layout.addWidget(self.tipo_combo)
-        
-        filters_layout.addWidget(tipo_container, stretch=1)
         
         # Filtro por estado de stock
         stock_container = QWidget()
@@ -209,21 +190,29 @@ class InventarioWindow(QWidget):
         
         # Tabla de inventario
         self.inventory_table = QTableWidget()
-        self.inventory_table.setColumnCount(8)
+        self.inventory_table.setColumnCount(14)
         self.inventory_table.setHorizontalHeaderLabels([
-            "Código", "Nombre", "Categoría", "Precio", "Stock", "Stock Min", "Ubicación", "Estado"
+            "Código", "Nombre", "Descripción", "Categoría", "Precio Venta", "Precio Mayoreo", 
+            "Cant Mayoreo", "Stock", "Stock Min", "Costo Promedio", "Ubicación", "Refrigeración", 
+            "Inventariable", "Estado"
         ])
         
         # Configurar header
         header = self.inventory_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Código
+        header.setSectionResizeMode(1, QHeaderView.Stretch)           # Nombre
+        header.setSectionResizeMode(2, QHeaderView.Stretch)           # Descripción
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Categoría
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Precio Venta
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Precio Mayoreo
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Cant Mayoreo
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Stock
+        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Stock Min
+        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Costo Promedio
+        header.setSectionResizeMode(10, QHeaderView.ResizeToContents) # Ubicación
+        header.setSectionResizeMode(11, QHeaderView.ResizeToContents) # Refrigeración
+        header.setSectionResizeMode(12, QHeaderView.ResizeToContents) # Inventariable
+        header.setSectionResizeMode(13, QHeaderView.ResizeToContents) # Estado
         
         self.inventory_table.verticalHeader().setVisible(False)
         self.inventory_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -340,14 +329,30 @@ class InventarioWindow(QWidget):
             # Nombre
             self.inventory_table.setItem(row, 1, QTableWidgetItem(producto['nombre']))
             
-            # Categoría (usar seccion si está disponible)
-            self.inventory_table.setItem(row, 2, QTableWidgetItem(producto.get('seccion', 'N/A')))
+            # Descripción
+            descripcion = producto.get('descripcion', '')
+            self.inventory_table.setItem(row, 2, QTableWidgetItem(descripcion))
             
-            # Precio
+            # Categoría (usar seccion si está disponible)
+            self.inventory_table.setItem(row, 3, QTableWidgetItem(producto.get('seccion', 'N/A')))
+            
+            # Precio Venta
             precio = float(producto['precio']) if producto['precio'] is not None else 0.0
             precio_item = QTableWidgetItem(f"${precio:.2f}")
             precio_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.inventory_table.setItem(row, 3, precio_item)
+            self.inventory_table.setItem(row, 4, precio_item)
+            
+            # Precio Mayoreo
+            precio_mayoreo = float(producto.get('precio_mayoreo', 0)) if producto.get('precio_mayoreo') is not None else 0.0
+            precio_mayoreo_item = QTableWidgetItem(f"${precio_mayoreo:.2f}" if precio_mayoreo > 0 else "")
+            precio_mayoreo_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.inventory_table.setItem(row, 5, precio_mayoreo_item)
+            
+            # Cantidad Mayoreo
+            cantidad_mayoreo = producto.get('cantidad_mayoreo', 0) or 0
+            cantidad_mayoreo_item = QTableWidgetItem(str(cantidad_mayoreo) if cantidad_mayoreo > 0 else "")
+            cantidad_mayoreo_item.setTextAlignment(Qt.AlignCenter)
+            self.inventory_table.setItem(row, 6, cantidad_mayoreo_item)
             
             # Stock actual
             stock_item = QTableWidgetItem(str(producto['stock_actual']))
@@ -357,23 +362,41 @@ class InventarioWindow(QWidget):
             if producto['stock_actual'] <= producto['stock_minimo']:
                 stock_item.setForeground(Qt.red)
             
-            self.inventory_table.setItem(row, 4, stock_item)
+            self.inventory_table.setItem(row, 7, stock_item)
             
             # Stock mínimo
             stock_min_item = QTableWidgetItem(str(producto['stock_minimo']))
             stock_min_item.setTextAlignment(Qt.AlignCenter)
-            self.inventory_table.setItem(row, 5, stock_min_item)
+            self.inventory_table.setItem(row, 8, stock_min_item)
+            
+            # Costo Promedio
+            costo_promedio = float(producto.get('costo_promedio', 0)) if producto.get('costo_promedio') is not None else 0.0
+            costo_item = QTableWidgetItem(f"${costo_promedio:.2f}" if costo_promedio > 0 else "")
+            costo_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.inventory_table.setItem(row, 9, costo_item)
             
             # Ubicación
             ubicacion = producto.get('ubicacion', 'N/A')
-            self.inventory_table.setItem(row, 6, QTableWidgetItem(ubicacion))
+            self.inventory_table.setItem(row, 10, QTableWidgetItem(ubicacion))
+            
+            # Requiere Refrigeración
+            refrigeracion = "Sí" if producto.get('requiere_refrigeracion', False) else "No"
+            refrigeracion_item = QTableWidgetItem(refrigeracion)
+            refrigeracion_item.setTextAlignment(Qt.AlignCenter)
+            self.inventory_table.setItem(row, 11, refrigeracion_item)
+            
+            # Es Inventariable
+            inventariable = "Sí" if producto.get('es_inventariable', True) else "No"
+            inventariable_item = QTableWidgetItem(inventariable)
+            inventariable_item.setTextAlignment(Qt.AlignCenter)
+            self.inventory_table.setItem(row, 12, inventariable_item)
             
             # Estado
             estado = "Activo" if producto['activo'] else "Inactivo"
             estado_item = QTableWidgetItem(estado)
             if not producto['activo']:
                 estado_item.setForeground(Qt.gray)
-            self.inventory_table.setItem(row, 7, estado_item)
+            self.inventory_table.setItem(row, 13, estado_item)
         
         # Actualizar información
         total_productos = len(productos)
@@ -395,7 +418,6 @@ class InventarioWindow(QWidget):
         try:
             texto_busqueda = self.search_bar.text().lower()
             categoria_seleccionada = self.categoria_combo.currentText()
-            tipo_seleccionado = self.tipo_combo.currentText()
             stock_seleccionado = self.stock_combo.currentText()
             ubicacion_seleccionada = self.ubicacion_combo.currentText()
             solo_activos = self.check_solo_activos.isChecked()
@@ -414,17 +436,9 @@ class InventarioWindow(QWidget):
                     if not texto_match:
                         continue
                 
-                # Filtro de categoría (usar seccion)
+                # Filtro de categoría (usar categoria de ca_categorias_producto)
                 if categoria_seleccionada != "Todas":
-                    if producto.get('seccion') != categoria_seleccionada:
-                        continue
-                
-                # Filtro de tipo de producto
-                if tipo_seleccionado == "Producto Varios":
-                    if producto['tipo_producto'] != 'varios':
-                        continue
-                elif tipo_seleccionado == "Suplemento":
-                    if producto['tipo_producto'] != 'suplemento':
+                    if producto.get('categoria') != categoria_seleccionada:
                         continue
                 
                 # Filtro de estado de stock
@@ -463,7 +477,6 @@ class InventarioWindow(QWidget):
         """Limpiar todos los filtros"""
         self.search_bar.clear()
         self.categoria_combo.setCurrentIndex(0)
-        self.tipo_combo.setCurrentIndex(0)
         self.stock_combo.setCurrentIndex(0)
         self.ubicacion_combo.setCurrentIndex(0)
         self.check_solo_activos.setChecked(True)

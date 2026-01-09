@@ -1,6 +1,6 @@
 """
 Componente de Grid Editable para Catálogo de Productos
-Permite editar información de suplementos y productos varios
+Permite editar información de productos en una tabla unificada
 """
 
 from PySide6.QtWidgets import (
@@ -17,13 +17,27 @@ from ui.components import WindowsPhoneTheme, TileButton, StyledLabel, show_info_
 class EditableCatalogGrid(QWidget):
     """Widget con grid editable para catálogo de productos"""
     
+    # Enum de unidades de medida
+    UNIDADES_MEDIDA = [
+        "",  # Opción vacía
+        "gramos",
+        "kilogramos",
+        "mililitros",
+        "litros",
+        "piezas",
+        "onzas",
+        "libras",
+        "galones",
+        "caja",
+        "paquete"
+    ]
+    
     catalogo_actualizado = Signal()
     
     def __init__(self, postgres_manager, parent=None):
         super().__init__(parent)
         self.pg_manager = postgres_manager
         self.productos_varios = []
-        self.suplementos = []
         self.cambios_pendientes = {}  # {codigo_interno: {campo: valor_nuevo, ...}}
         
         self.setup_ui()
@@ -39,53 +53,17 @@ class EditableCatalogGrid(QWidget):
         content_layout = create_page_layout("CATÁLOGO DE PRODUCTOS - EDICIÓN")
         content.setLayout(content_layout)
         
-        # Panel de información
-        info_panel = ContentPanel()
-        info_layout = QHBoxLayout(info_panel)
-        info_label = StyledLabel("Seleccione productos para editar. Los cambios se guardarán en la base de datos.", 
-                                 size=WindowsPhoneTheme.FONT_SIZE_SMALL)
-        info_layout.addWidget(info_label, stretch=1)
-        content_layout.addWidget(info_panel)
+        # Panel de búsqueda
+        search_panel = ContentPanel()
+        search_layout = QHBoxLayout(search_panel)
+        search_layout.setSpacing(10)
         
-        # Tabs para tipos de productos
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet(f"""
-            QTabWidget::pane {{
-                border: 1px solid {WindowsPhoneTheme.BORDER_COLOR};
-            }}
-            QTabBar::tab {{
-                background-color: {WindowsPhoneTheme.BG_LIGHT};
-                color: {WindowsPhoneTheme.TEXT_PRIMARY};
-                padding: 8px 16px;
-                border: 1px solid {WindowsPhoneTheme.BORDER_COLOR};
-                border-bottom: none;
-            }}
-            QTabBar::tab:selected {{
-                background-color: white;
-                border-bottom: 2px solid {WindowsPhoneTheme.TILE_BLUE};
-            }}
-            QTabBar::tab:hover {{
-                background-color: #f0f0f0;
-            }}
-        """)
-        
-        # Tab Productos Varios
-        self.tab_varios = QWidget()
-        tab_varios_layout = QVBoxLayout(self.tab_varios)
-        tab_varios_layout.setContentsMargins(10, 10, 10, 10)
-        tab_varios_layout.setSpacing(10)
-        
-        # Panel de búsqueda para productos varios
-        search_varios_panel = ContentPanel()
-        search_varios_layout = QHBoxLayout(search_varios_panel)
-        search_varios_layout.setSpacing(10)
-        
-        search_varios_layout.addWidget(StyledLabel("Buscar:", bold=True))
+        search_layout.addWidget(StyledLabel("Buscar:", bold=True))
         self.search_varios = SearchBar("Buscar por código, nombre o descripción...")
         self.search_varios.connect_search(self.filtrar_productos_varios)
-        search_varios_layout.addWidget(self.search_varios, stretch=1)
+        search_layout.addWidget(self.search_varios, stretch=1)
         
-        search_varios_layout.addWidget(StyledLabel("Categoría:", bold=True))
+        search_layout.addWidget(StyledLabel("Categoría:", bold=True))
         self.combo_categoria_varios = QComboBox()
         self.combo_categoria_varios.setMinimumWidth(150)
         self.combo_categoria_varios.addItem("Todas")
@@ -98,9 +76,9 @@ class EditableCatalogGrid(QWidget):
                 background-color: white;
             }}
         """)
-        search_varios_layout.addWidget(self.combo_categoria_varios)
+        search_layout.addWidget(self.combo_categoria_varios)
         
-        search_varios_layout.addWidget(StyledLabel("Estado:", bold=True))
+        search_layout.addWidget(StyledLabel("Estado:", bold=True))
         self.combo_activo_varios = QComboBox()
         self.combo_activo_varios.addItems(["Todos", "Activos", "Inactivos"])
         self.combo_activo_varios.currentTextChanged.connect(self.filtrar_productos_varios)
@@ -112,70 +90,17 @@ class EditableCatalogGrid(QWidget):
                 background-color: white;
             }}
         """)
-        search_varios_layout.addWidget(self.combo_activo_varios)
+        search_layout.addWidget(self.combo_activo_varios)
         
-        tab_varios_layout.addWidget(search_varios_panel)
-        
-        self.tabla_varios = self.crear_tabla_productos_varios()
-        tab_varios_layout.addWidget(self.tabla_varios)
-        self.tab_widget.addTab(self.tab_varios, "Productos Varios")
-        
-        # Tab Suplementos
-        self.tab_suplementos = QWidget()
-        tab_suplementos_layout = QVBoxLayout(self.tab_suplementos)
-        tab_suplementos_layout.setContentsMargins(10, 10, 10, 10)
-        tab_suplementos_layout.setSpacing(10)
-        
-        # Panel de búsqueda para suplementos
-        search_suplementos_panel = ContentPanel()
-        search_suplementos_layout = QHBoxLayout(search_suplementos_panel)
-        search_suplementos_layout.setSpacing(10)
-        
-        search_suplementos_layout.addWidget(StyledLabel("Buscar:", bold=True))
-        self.search_suplementos = SearchBar("Buscar por código, nombre o marca...")
-        self.search_suplementos.connect_search(self.filtrar_suplementos)
-        search_suplementos_layout.addWidget(self.search_suplementos, stretch=1)
-        
-        search_suplementos_layout.addWidget(StyledLabel("Tipo:", bold=True))
-        self.combo_tipo_suplemento = QComboBox()
-        self.combo_tipo_suplemento.setMinimumWidth(150)
-        self.combo_tipo_suplemento.addItem("Todos")
-        self.combo_tipo_suplemento.currentTextChanged.connect(self.filtrar_suplementos)
-        self.combo_tipo_suplemento.setStyleSheet(f"""
-            QComboBox {{
-                padding: 6px;
-                border: 2px solid {WindowsPhoneTheme.BORDER_COLOR};
-                border-radius: 4px;
-                background-color: white;
-            }}
-        """)
-        search_suplementos_layout.addWidget(self.combo_tipo_suplemento)
-        
-        search_suplementos_layout.addWidget(StyledLabel("Estado:", bold=True))
-        self.combo_activo_suplementos = QComboBox()
-        self.combo_activo_suplementos.addItems(["Todos", "Activos", "Inactivos"])
-        self.combo_activo_suplementos.currentTextChanged.connect(self.filtrar_suplementos)
-        self.combo_activo_suplementos.setStyleSheet(f"""
-            QComboBox {{
-                padding: 6px;
-                border: 2px solid {WindowsPhoneTheme.BORDER_COLOR};
-                border-radius: 4px;
-                background-color: white;
-            }}
-        """)
-        search_suplementos_layout.addWidget(self.combo_activo_suplementos)
-        
-        tab_suplementos_layout.addWidget(search_suplementos_panel)
-        
-        self.tabla_suplementos = self.crear_tabla_suplementos()
-        tab_suplementos_layout.addWidget(self.tabla_suplementos)
-        self.tab_widget.addTab(self.tab_suplementos, "Suplementos")
+        content_layout.addWidget(search_panel)
         
         # Panel con tabla
         table_panel = ContentPanel()
         table_layout = QVBoxLayout(table_panel)
         table_layout.setContentsMargins(0, 0, 0, 0)
-        table_layout.addWidget(self.tab_widget)
+        
+        self.tabla_varios = self.crear_tabla_productos_varios()
+        table_layout.addWidget(self.tabla_varios)
         content_layout.addWidget(table_panel)
         
         # Panel de información de cambios
@@ -211,20 +136,35 @@ class EditableCatalogGrid(QWidget):
     def crear_tabla_productos_varios(self):
         """Crear tabla editable para productos varios"""
         tabla = QTableWidget()
-        tabla.setColumnCount(7)
+        tabla.setColumnCount(18)
         tabla.setHorizontalHeaderLabels([
-            "Código", "Nombre", "Descripción", "Precio", "Categoría", "Código Barras", "Activo"
+            "Código", "Nombre", "Descripción", "Precio Venta", "Precio Mayoreo", "Cant Mayoreo", 
+            "Costo Promedio", "Categoría", "Código Barras", "Requiere Refrig", "Es Inventariable", 
+            "Permite Sin Stock", "Aplica IEPS", "% IEPS", "Aplica IVA", "% IVA", "Cantidad Medida", 
+            "Unidad Medida", "Activo"
         ])
         
         # Configurar header
         header = tabla.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)   # Código
+        header.setSectionResizeMode(1, QHeaderView.Stretch)            # Nombre
+        header.setSectionResizeMode(2, QHeaderView.Stretch)            # Descripción
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)   # Precio Venta
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)   # Precio Mayoreo
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)   # Cant Mayoreo
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)   # Costo Promedio
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)   # Categoría
+        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)   # Código Barras
+        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)   # Requiere Refrig
+        header.setSectionResizeMode(10, QHeaderView.ResizeToContents)  # Es Inventariable
+        header.setSectionResizeMode(11, QHeaderView.ResizeToContents)  # Permite Sin Stock
+        header.setSectionResizeMode(12, QHeaderView.ResizeToContents)  # Aplica IEPS
+        header.setSectionResizeMode(13, QHeaderView.ResizeToContents)  # % IEPS
+        header.setSectionResizeMode(14, QHeaderView.ResizeToContents)  # Aplica IVA
+        header.setSectionResizeMode(15, QHeaderView.ResizeToContents)  # % IVA
+        header.setSectionResizeMode(16, QHeaderView.ResizeToContents)  # Cantidad Medida
+        header.setSectionResizeMode(17, QHeaderView.ResizeToContents)  # Unidad Medida
+        header.setSectionResizeMode(18, QHeaderView.ResizeToContents)  # Activo
         
         tabla.verticalHeader().setVisible(False)
         tabla.verticalHeader().setDefaultSectionSize(60)
@@ -264,86 +204,27 @@ class EditableCatalogGrid(QWidget):
         
         return tabla
     
-    def crear_tabla_suplementos(self):
-        """Crear tabla editable para suplementos"""
-        tabla = QTableWidget()
-        tabla.setColumnCount(7)
-        tabla.setHorizontalHeaderLabels([
-            "Código", "Nombre", "Marca", "Tipo", "Precio", "Código Barras", "Activo"
-        ])
-        
-        # Configurar header
-        header = tabla.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        
-        tabla.verticalHeader().setVisible(False)
-        tabla.verticalHeader().setDefaultSectionSize(60)
-        tabla.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        tabla.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        tabla.setAlternatingRowColors(True)
-        tabla.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-        # Aplicar estilos
-        tabla.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: white;
-                border: none;
-                gridline-color: #e5e7eb;
-            }}
-            QTableWidget::item {{
-                padding: 10px;
-                border-bottom: 1px solid #e5e7eb;
-            }}
-            QTableWidget::item:selected {{
-                background-color: {WindowsPhoneTheme.TILE_BLUE};
-                color: white;
-            }}
-            QHeaderView::section {{
-                background-color: {WindowsPhoneTheme.BG_LIGHT};
-                color: {WindowsPhoneTheme.PRIMARY_BLUE};
-                padding: 10px 6px;
-                border: none;
-                border-bottom: 2px solid {WindowsPhoneTheme.TILE_BLUE};
-                font-weight: bold;
-                font-family: '{WindowsPhoneTheme.FONT_FAMILY}';
-                font-size: {WindowsPhoneTheme.FONT_SIZE_NORMAL}px;
-            }}
-        """)
-        
-        tabla.itemChanged.connect(self.on_item_changed)
-        
-        return tabla
+
     
     def cargar_datos(self):
         """Cargar datos de productos desde la base de datos"""
         try:
             logging.info("Cargando catálogo de productos...")
             
-            # Obtener productos varios
-            response_varios = self.pg_manager.client.table('ca_productos_varios').select('*').execute()
-            self.productos_varios = response_varios.data or []
-            
-            # Obtener suplementos
-            response_suplementos = self.pg_manager.client.table('ca_suplementos').select('*').execute()
-            self.suplementos = response_suplementos.data or []
+            # Obtener todos los productos
+            self.productos_varios = self.pg_manager.obtener_productos_por_categoria()
+            self.suplementos = []  # Ya no se usa separadamente
             
             # Actualizar combos de filtros
             self.actualizar_combos_filtros()
             
-            # Poblar tablas
+            # Poblar tabla
             self.poblar_tabla_productos_varios()
-            self.poblar_tabla_suplementos()
             
             self.cambios_pendientes = {}
             self.actualizar_label_cambios()
             
-            logging.info(f"Catálogo cargado: {len(self.productos_varios)} productos varios, {len(self.suplementos)} suplementos")
+            logging.info(f"Catálogo cargado: {len(self.productos_varios)} productos")
             
         except Exception as e:
             logging.error(f"Error cargando catálogo: {e}")
@@ -362,18 +243,6 @@ class EditableCatalogGrid(QWidget):
         self.combo_categoria_varios.addItem("Todas")
         for cat in sorted(categorias):
             self.combo_categoria_varios.addItem(cat)
-        
-        # Tipos únicos de suplementos
-        tipos = set()
-        for suplemento in self.suplementos:
-            tipo = suplemento.get('tipo')
-            if tipo:
-                tipos.add(tipo)
-        
-        self.combo_tipo_suplemento.clear()
-        self.combo_tipo_suplemento.addItem("Todos")
-        for tipo in sorted(tipos):
-            self.combo_tipo_suplemento.addItem(tipo)
     
     def poblar_tabla_productos_varios(self):
         """Poblar tabla de productos varios"""
@@ -394,57 +263,124 @@ class EditableCatalogGrid(QWidget):
             # Descripción (editable)
             tabla.setItem(row, 2, QTableWidgetItem(str(producto.get('descripcion', ''))))
             
-            # Precio (editable)
-            item_precio = QTableWidgetItem(f"{float(producto.get('precio_venta', 0)):.2f}")
-            tabla.setItem(row, 3, item_precio)
+            # Precio Venta (editable)
+            item_precio_venta = QTableWidgetItem(f"{float(producto.get('precio_venta', 0)):.2f}")
+            tabla.setItem(row, 3, item_precio_venta)
+            
+            # Precio Mayoreo (editable)
+            precio_mayoreo = producto.get('precio_mayoreo')
+            item_precio_mayoreo = QTableWidgetItem(f"{float(precio_mayoreo):.2f}" if precio_mayoreo else "")
+            tabla.setItem(row, 4, item_precio_mayoreo)
+            
+            # Cantidad Mayoreo (editable)
+            cantidad_mayoreo = producto.get('cantidad_mayoreo')
+            item_cantidad_mayoreo = QTableWidgetItem(str(cantidad_mayoreo) if cantidad_mayoreo else "")
+            tabla.setItem(row, 5, item_cantidad_mayoreo)
+            
+            # Costo Promedio (editable)
+            costo_promedio = producto.get('costo_promedio')
+            item_costo = QTableWidgetItem(f"{float(costo_promedio):.2f}" if costo_promedio else "")
+            tabla.setItem(row, 6, item_costo)
             
             # Categoría (editable)
-            tabla.setItem(row, 4, QTableWidgetItem(str(producto.get('categoria', ''))))
+            tabla.setItem(row, 7, QTableWidgetItem(str(producto.get('categoria', ''))))
             
             # Código Barras (editable)
-            tabla.setItem(row, 5, QTableWidgetItem(str(producto.get('codigo_barras', '') or '')))
+            tabla.setItem(row, 8, QTableWidgetItem(str(producto.get('codigo_barras', '') or '')))
+            
+            # Requiere Refrigeración (editable)
+            item_refrig = QTableWidgetItem("Sí" if producto.get('requiere_refrigeracion', False) else "No")
+            tabla.setItem(row, 9, item_refrig)
+            
+            # Es Inventariable (editable)
+            item_invent = QTableWidgetItem("Sí" if producto.get('es_inventariable', True) else "No")
+            tabla.setItem(row, 10, item_invent)
+            
+            # Permite Venta Sin Stock (editable)
+            item_sin_stock = QTableWidgetItem("Sí" if producto.get('permite_venta_sin_stock', False) else "No")
+            tabla.setItem(row, 11, item_sin_stock)
+            
+            # Aplica IEPS (editable)
+            item_ieps = QTableWidgetItem("Sí" if producto.get('aplica_ieps', False) else "No")
+            tabla.setItem(row, 12, item_ieps)
+            
+            # % IEPS (editable)
+            porcentaje_ieps = producto.get('porcentaje_ieps', 0)
+            item_porcentaje_ieps = QTableWidgetItem(f"{float(porcentaje_ieps):.2f}" if porcentaje_ieps else "0.00")
+            tabla.setItem(row, 13, item_porcentaje_ieps)
+            
+            # Aplica IVA (editable)
+            item_iva = QTableWidgetItem("Sí" if producto.get('aplica_iva', True) else "No")
+            tabla.setItem(row, 14, item_iva)
+            
+            # % IVA (editable)
+            porcentaje_iva = producto.get('porcentaje_iva', 16)
+            item_porcentaje_iva = QTableWidgetItem(f"{float(porcentaje_iva):.2f}" if porcentaje_iva else "16.00")
+            tabla.setItem(row, 15, item_porcentaje_iva)
+            
+            # Cantidad Medida (editable)
+            cantidad_medida = producto.get('cantidad_medida')
+            item_cantidad_medida = QTableWidgetItem(f"{float(cantidad_medida):.2f}" if cantidad_medida else "")
+            tabla.setItem(row, 16, item_cantidad_medida)
+            
+            # Unidad Medida (editable - Combo)
+            combo_unidad = QComboBox()
+            combo_unidad.addItems(self.UNIDADES_MEDIDA)
+            valor_actual = str(producto.get('unidad_medida', '') or '')
+            if valor_actual in self.UNIDADES_MEDIDA:
+                combo_unidad.setCurrentText(valor_actual)
+            combo_unidad.currentTextChanged.connect(lambda text, r=row: self._on_combo_changed(r, 17, text))
+            combo_unidad.setStyleSheet("""
+                QComboBox {
+                    padding: 4px;
+                    border: none;
+                    background-color: white;
+                }
+            """)
+            tabla.setCellWidget(row, 17, combo_unidad)
             
             # Activo (editable)
             item_activo = QTableWidgetItem("Sí" if producto.get('activo', True) else "No")
-            tabla.setItem(row, 6, item_activo)
+            tabla.setItem(row, 18, item_activo)
     
-    def poblar_tabla_suplementos(self):
-        """Poblar tabla de suplementos"""
-        tabla = self.tabla_suplementos
-        tabla.setRowCount(0)
+
+    
+    def _on_combo_changed(self, row, col, text):
+        """Manejar cambio en un QComboBox de unidad"""
+        tabla = self.tabla_varios
+        codigo_item = tabla.item(row, 0)
         
-        for row, suplemento in enumerate(self.suplementos):
-            tabla.insertRow(row)
+        if codigo_item:
+            codigo = codigo_item.text()
             
-            # Código (no editable)
-            item_codigo = QTableWidgetItem(str(suplemento.get('codigo_interno', '')))
-            item_codigo.setFlags(item_codigo.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            tabla.setItem(row, 0, item_codigo)
+            # Inicializar entrada si no existe
+            if codigo not in self.cambios_pendientes:
+                self.cambios_pendientes[codigo] = {}
             
-            # Nombre (editable)
-            tabla.setItem(row, 1, QTableWidgetItem(str(suplemento.get('nombre', ''))))
+            # Determinar el nombre del campo basado en las columnas de productos varios
+            campos = ['codigo_interno', 'nombre', 'descripcion', 'marca', 'tipo', 'precio_venta', 'categoria', 'cantidad_medida', 'unidad_medida', 'codigo_barras', 'stock_actual', 'stock_minimo', 'ubicacion', 'fecha_vencimiento', 'notas', 'activo', 'fecha_creacion', 'fecha_actualizacion']
             
-            # Marca (editable)
-            tabla.setItem(row, 2, QTableWidgetItem(str(suplemento.get('marca', ''))))
-            
-            # Tipo (editable)
-            tabla.setItem(row, 3, QTableWidgetItem(str(suplemento.get('tipo', ''))))
-            
-            # Precio (editable)
-            item_precio = QTableWidgetItem(f"{float(suplemento.get('precio_venta', 0)):.2f}")
-            tabla.setItem(row, 4, item_precio)
-            
-            # Código Barras (editable)
-            tabla.setItem(row, 5, QTableWidgetItem(str(suplemento.get('codigo_barras', '') or '')))
-            
-            # Activo (editable)
-            item_activo = QTableWidgetItem("Sí" if suplemento.get('activo', True) else "No")
-            tabla.setItem(row, 6, item_activo)
+            if col < len(campos):
+                campo = campos[col]
+                
+                # Resaltar celda modificada
+                widget = tabla.cellWidget(row, col)
+                if widget:
+                    widget.setStyleSheet(f"""
+                        QComboBox {{
+                            padding: 4px;
+                            border: 2px solid #ff8c00;
+                            background-color: #fff3cd;
+                        }}
+                    """)
+                
+                self.cambios_pendientes[codigo][campo] = text
+                self.actualizar_label_cambios()
     
     def on_item_changed(self, item):
         """Manejar cambio en un item de la tabla"""
         # Obtener código del producto
-        tabla = self.tabla_varios if self.tab_widget.currentIndex() == 0 else self.tabla_suplementos
+        tabla = self.tabla_varios
         row = item.row()
         codigo_item = tabla.item(row, 0)
         
@@ -452,11 +388,13 @@ class EditableCatalogGrid(QWidget):
             codigo = codigo_item.text()
             col = item.column()
             
-            # Determinar el nombre del campo según la tabla
-            if self.tab_widget.currentIndex() == 0:  # Productos varios
-                campos = ['codigo_interno', 'nombre', 'descripcion', 'precio_venta', 'categoria', 'codigo_barras', 'activo']
-            else:  # Suplementos
-                campos = ['codigo_interno', 'nombre', 'marca', 'tipo', 'precio_venta', 'codigo_barras', 'activo']
+            # Lista completa de campos para productos varios (18 columnas)
+            campos = [
+                'codigo_interno', 'nombre', 'descripcion', 'marca', 'tipo', 'precio_venta', 
+                'categoria', 'cantidad_medida', 'unidad_medida', 'codigo_barras', 'stock_actual', 
+                'stock_minimo', 'ubicacion', 'fecha_vencimiento', 'notas', 'activo', 
+                'fecha_creacion', 'fecha_actualizacion'
+            ]
             
             if col < len(campos):
                 campo = campos[col]
@@ -499,21 +437,32 @@ class EditableCatalogGrid(QWidget):
             
             for codigo, cambios in self.cambios_pendientes.items():
                 try:
-                    # Determinar si es producto varios o suplemento
-                    es_producto_varios = any(p.get('codigo_interno') == codigo for p in self.productos_varios)
-                    tabla_nombre = 'ca_productos_varios' if es_producto_varios else 'ca_suplementos'
-                    
                     # Convertir valores booleanos
-                    for campo in ['activo']:
+                    for campo in ['activo', 'requiere_refrigeracion', 'es_inventariable', 'permite_venta_sin_stock', 'aplica_ieps', 'aplica_iva']:
                         if campo in cambios:
                             cambios[campo] = cambios[campo].lower() in ['sí', 'si', 'true', '1']
                     
-                    # Convertir precio a float
-                    if 'precio_venta' in cambios:
-                        cambios['precio_venta'] = float(cambios['precio_venta'])
+                    # Convertir precios y costos a float
+                    for campo in ['precio_venta', 'precio_mayoreo', 'costo_promedio', 'porcentaje_ieps', 'porcentaje_iva']:
+                        if campo in cambios and cambios[campo]:
+                            try:
+                                cambios[campo] = float(cambios[campo])
+                            except ValueError:
+                                cambios[campo] = 0.0
+                    
+                    # Convertir cantidades a int/float según corresponda
+                    if 'cantidad_mayoreo' in cambios and cambios['cantidad_mayoreo']:
+                        try:
+                            cambios['cantidad_mayoreo'] = int(float(cambios['cantidad_mayoreo']))
+                        except ValueError:
+                            cambios['cantidad_mayoreo'] = None
+                    
+                    # Convertir cantidad_medida a float (puede ser None/vacío)
+                    if 'cantidad_medida' in cambios:
+                        cambios['cantidad_medida'] = float(cambios['cantidad_medida']) if cambios['cantidad_medida'].strip() else None
                     
                     # Actualizar en base de datos
-                    self.pg_manager.client.table(tabla_nombre).update(cambios).eq('codigo_interno', codigo).execute()
+                    self.pg_manager.actualizar_producto(codigo, cambios)
                     total_guardados += 1
                     
                 except Exception as e:
@@ -589,36 +538,4 @@ class EditableCatalogGrid(QWidget):
             
             self.tabla_varios.setRowHidden(row, not mostrar_fila)
     
-    def filtrar_suplementos(self):
-        """Filtrar suplementos por búsqueda, tipo y estado"""
-        texto_busqueda = self.search_suplementos.text().lower()
-        tipo_filtro = self.combo_tipo_suplemento.currentText()
-        estado_filtro = self.combo_activo_suplementos.currentText()
-        
-        for row in range(self.tabla_suplementos.rowCount()):
-            mostrar_fila = True
-            
-            # Filtro de búsqueda
-            if texto_busqueda:
-                codigo = self.tabla_suplementos.item(row, 0).text().lower()
-                nombre = self.tabla_suplementos.item(row, 1).text().lower()
-                marca = self.tabla_suplementos.item(row, 2).text().lower() if self.tabla_suplementos.item(row, 2) else ""
-                
-                if not (texto_busqueda in codigo or texto_busqueda in nombre or texto_busqueda in marca):
-                    mostrar_fila = False
-            
-            # Filtro de tipo
-            if mostrar_fila and tipo_filtro != "Todos":
-                tipo = self.tabla_suplementos.item(row, 3).text()
-                if tipo != tipo_filtro:
-                    mostrar_fila = False
-            
-            # Filtro de estado
-            if mostrar_fila and estado_filtro != "Todos":
-                activo = self.tabla_suplementos.item(row, 6).text()
-                if estado_filtro == "Activos" and activo != "Sí":
-                    mostrar_fila = False
-                elif estado_filtro == "Inactivos" and activo != "No":
-                    mostrar_fila = False
-            
-            self.tabla_suplementos.setRowHidden(row, not mostrar_fila)
+

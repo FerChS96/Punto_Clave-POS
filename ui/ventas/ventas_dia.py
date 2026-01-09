@@ -114,14 +114,20 @@ class VentasDiaWindow(QWidget):
                 self.ventas_count.setText("0")
                 return
             
-            # Obtener ventas del turno usando Supabase
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).eq('id_turno', self.turno_id).order('fecha', desc=True).execute()
+            # Obtener ventas del turno usando PostgreSQL
+            ventas = self.pg_manager.query("""
+                SELECT v.id_venta, v.fecha, v.total, u.nombre_completo
+                FROM ventas v
+                LEFT JOIN usuarios u ON v.id_vendedor = u.id_usuario
+                WHERE v.id_turno = %s
+                ORDER BY v.fecha DESC
+            """, (self.turno_id,))
             
-            ventas = response.data or []
-            total_vendido = sum(v.get('total', 0) for v in ventas)
-            num_ventas = len(ventas)
+            total_vendido = sum(
+                float(v[2] if isinstance(v, tuple) else v['total']) 
+                for v in (ventas or [])
+            ) if ventas else 0
+            num_ventas = len(ventas) if ventas else 0
             
             self.total_value.setText(f"${total_vendido:.2f}")
             self.ventas_count.setText(str(num_ventas))
@@ -170,12 +176,14 @@ class VentasDiaWindow(QWidget):
                 )
                 return
             
-            # Obtener ventas del turno desde Supabase
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).eq('id_turno', self.turno_id).order('fecha', desc=True).execute()
-            
-            ventas = response.data or []
+            # Obtener ventas del turno desde PostgreSQL
+            ventas = self.pg_manager.query("""
+                SELECT v.id_venta, v.fecha, v.total, u.nombre_completo
+                FROM ventas v
+                LEFT JOIN usuarios u ON v.id_vendedor = u.id_usuario
+                WHERE v.id_turno = %s
+                ORDER BY v.fecha DESC
+            """, (self.turno_id,)) or []
             
             # Crear libro de Excel
             wb = Workbook()
@@ -315,11 +323,13 @@ class DetalleVentasDiaDialog(QDialog):
     def cargar_ventas(self):
         """Cargar ventas del turno"""
         try:
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).eq('id_turno', self.turno_id).order('fecha', desc=True).execute()
-            
-            ventas = response.data or []
+            ventas = self.pg_manager.query("""
+                SELECT v.id_venta, v.fecha, v.total, u.nombre_completo
+                FROM ventas v
+                LEFT JOIN usuarios u ON v.id_vendedor = u.id_usuario
+                WHERE v.id_turno = %s
+                ORDER BY v.fecha DESC
+            """, (self.turno_id,)) or []
             
             self.tabla_ventas.setRowCount(len(ventas))
             
@@ -327,21 +337,29 @@ class DetalleVentasDiaDialog(QDialog):
                 # Establecer altura de fila
                 self.tabla_ventas.setRowHeight(row, 55)
                 
+                # Extraer valores según si es tuple o dict
+                venta_id = venta[0] if isinstance(venta, tuple) else venta['id_venta']
+                fecha = venta[1] if isinstance(venta, tuple) else venta['fecha']
+                total = venta[2] if isinstance(venta, tuple) else venta['total']
+                nombre_completo = venta[3] if isinstance(venta, tuple) else venta['nombre_completo']
+                
                 # ID
-                self.tabla_ventas.setItem(row, 0, QTableWidgetItem(str(venta['id_venta'])))
+                self.tabla_ventas.setItem(row, 0, QTableWidgetItem(str(venta_id)))
                 
                 # Hora
-                hora = venta['fecha'].strftime("%H:%M") if isinstance(venta['fecha'], datetime) else str(venta['fecha'])
+                if isinstance(fecha, datetime):
+                    hora = fecha.strftime("%H:%M")
+                else:
+                    hora = str(fecha)
                 self.tabla_ventas.setItem(row, 1, QTableWidgetItem(hora))
                 
                 # Total
-                total_item = QTableWidgetItem(f"${venta['total']:.2f}")
+                total_item = QTableWidgetItem(f"${float(total):.2f}")
                 total_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.tabla_ventas.setItem(row, 2, total_item)
                 
                 # Usuario
-                usuario_name = venta.get('usuarios', {}).get('nombre_completo', 'N/A') if isinstance(venta.get('usuarios'), dict) else venta.get('usuario', 'N/A')
-                self.tabla_ventas.setItem(row, 3, QTableWidgetItem(usuario_name))
+                self.tabla_ventas.setItem(row, 3, QTableWidgetItem(nombre_completo or 'N/A'))
                 
                 # Estado
                 self.tabla_ventas.setItem(row, 4, QTableWidgetItem("Completada"))
@@ -456,49 +474,67 @@ class DetalleComandaDialog(QDialog):
     def cargar_detalle(self):
         """Cargar detalle de la comanda"""
         try:
-            # Obtener información de la venta
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).eq('id_venta', self.venta_id).single().execute()
+            # Obtener información de la venta usando PostgreSQL
+            ventas = self.pg_manager.query("""
+                SELECT v.id_venta, v.fecha, v.total, u.nombre_completo
+                FROM ventas v
+                LEFT JOIN usuarios u ON v.id_vendedor = u.id_usuario
+                WHERE v.id_venta = %s
+            """, (self.venta_id,))
             
-            venta = response.data
-            
-            if not venta:
+            if not ventas:
                 show_warning_dialog(self, "Error", f"No se encontró la venta #{self.venta_id}")
                 return
             
+            venta = ventas[0]
+            
+            # Extraer valores según si es tuple o dict
+            venta_id = venta[0] if isinstance(venta, tuple) else venta['id_venta']
+            fecha = venta[1] if isinstance(venta, tuple) else venta['fecha']
+            total = venta[2] if isinstance(venta, tuple) else venta['total']
+            usuario_name = venta[3] if isinstance(venta, tuple) else venta['nombre_completo']
+            
             # Actualizar información de cabecera
-            fecha_str = venta['fecha'][:16].replace('T', ' ') if isinstance(venta['fecha'], str) else venta['fecha'].strftime("%d/%m/%Y %H:%M")
-            usuario_name = venta.get('usuarios', {}).get('nombre_completo', 'N/A') if isinstance(venta.get('usuarios'), dict) else 'N/A'
+            if isinstance(fecha, datetime):
+                fecha_str = fecha.strftime("%d/%m/%Y %H:%M")
+            else:
+                fecha_str = str(fecha)[:16].replace('T', ' ')
+
             self.fecha_label.setText(f"Fecha: {fecha_str}")
             self.usuario_label.setText(f"Usuario: {usuario_name}")
-            self.total_label.setText(f"Total: ${venta['total']:.2f}")
+            self.total_label.setText(f"Total: ${float(total):.2f}")
             
-            # Obtener items de la venta
-            response_items = self.pg_manager.client.table('detalles_venta').select(
-                'codigo_interno, tipo_producto, cantidad, precio_unitario, subtotal_linea, nombre_producto, descripcion_producto'
-            ).eq('id_venta', self.venta_id).execute()
-            
-            items = response_items.data or []
-            
+            # Obtener items de la venta usando PostgreSQL
+            items = self.pg_manager.query("""
+                SELECT codigo_interno, tipo_producto, cantidad, precio_unitario, subtotal_linea, nombre_producto, descripcion_producto
+                FROM detalles_venta
+                WHERE id_venta = %s
+            """, (self.venta_id,)) or []
+
             self.tabla_productos.setRowCount(len(items))
             
             for row, item in enumerate(items):
+                # Extraer valores según si es tuple o dict
+                nombre_producto = item[5] if isinstance(item, tuple) else item['nombre_producto']
+                cantidad = item[2] if isinstance(item, tuple) else item['cantidad']
+                precio_unitario = item[3] if isinstance(item, tuple) else item['precio_unitario']
+                subtotal_linea = item[4] if isinstance(item, tuple) else item['subtotal_linea']
+                
                 # Producto
-                self.tabla_productos.setItem(row, 0, QTableWidgetItem(item['nombre_producto']))
+                self.tabla_productos.setItem(row, 0, QTableWidgetItem(nombre_producto))
                 
                 # Cantidad
-                cantidad_item = QTableWidgetItem(str(item['cantidad']))
+                cantidad_item = QTableWidgetItem(str(cantidad))
                 cantidad_item.setTextAlignment(Qt.AlignCenter)
                 self.tabla_productos.setItem(row, 1, cantidad_item)
                 
                 # Precio unitario
-                precio_item = QTableWidgetItem(f"${item['precio_unitario']:.2f}")
+                precio_item = QTableWidgetItem(f"${float(precio_unitario):.2f}")
                 precio_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.tabla_productos.setItem(row, 2, precio_item)
                 
                 # Subtotal
-                subtotal_item = QTableWidgetItem(f"${item['subtotal_linea']:.2f}")
+                subtotal_item = QTableWidgetItem(f"${float(subtotal_linea):.2f}")
                 subtotal_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.tabla_productos.setItem(row, 3, subtotal_item)
                 

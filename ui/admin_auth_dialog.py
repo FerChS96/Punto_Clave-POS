@@ -177,19 +177,18 @@ class AdminAuthDialog(QDialog):
             return
         
         try:
-            # Buscar usuario y verificar que sea administrador
-            response = self.pg_manager.client.table('usuarios').select('id_usuario, contrasenia, rol, nombre_completo').eq('nombre_usuario', usuario).eq('activo', True).execute()
-            user = response.data[0] if response.data else None
+            # Usar PostgreSQL authenticate_user para verificar credenciales
+            user_auth = self.pg_manager.authenticate_user(usuario, password)
             
-            if not user:
+            if not user_auth:
                 from ui.components import show_error_dialog
-                show_error_dialog(self, "Error", "Usuario no encontrado o inactivo")
+                show_error_dialog(self, "Error", "Usuario no encontrado o contraseña incorrecta")
                 self.password_input.clear()
                 self.usuario_input.setFocus()
                 return
             
             # Verificar que sea administrador o sistemas
-            if user['rol'] not in ['administrador', 'sistemas']:
+            if user_auth.get('rol') not in ['administrador', 'sistemas']:
                 from ui.components import show_error_dialog
                 show_error_dialog(
                     self, 
@@ -200,23 +199,15 @@ class AdminAuthDialog(QDialog):
                 self.usuario_input.clear()
                 self.usuario_input.setFocus()
                 return
-                
-                # Verificar contraseña
-                password_hash = user['contrasenia'].encode('utf-8')
-                if bcrypt.checkpw(password.encode('utf-8'), password_hash):
-                    # Autorización exitosa
-                    self.autorizado = True
-                    self.id_admin_autorizador = user['id_usuario']
-                    self.justificacion = justificacion
-                    self.nombre_admin = user['nombre_completo']
-                    
-                    logging.info(f"Autorización concedida por {user['nombre_completo']} (ID: {user['id_usuario']})")
-                    self.accept()
-                else:
-                    from ui.components import show_error_dialog
-                    show_error_dialog(self, "Error", "Contraseña incorrecta")
-                    self.password_input.clear()
-                    self.password_input.setFocus()
+            
+            # Autorización exitosa
+            self.autorizado = True
+            self.id_admin_autorizador = user_auth['id_usuario']
+            self.justificacion = justificacion
+            self.nombre_admin = user_auth['nombre_completo']
+            
+            logging.info(f"Autorización concedida por {user_auth['nombre_completo']} (ID: {user_auth['id_usuario']})")
+            self.accept()
                 
         except Exception as e:
             logging.error(f"Error verificando credenciales: {e}")

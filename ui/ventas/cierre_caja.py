@@ -6,7 +6,7 @@ Usando componentes reutilizables del sistema de diseño
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, 
     QLineEdit, QGridLayout,
-    QTextEdit, QSizePolicy
+    QTextEdit, QSizePolicy, QDialog
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QDoubleValidator
@@ -34,10 +34,9 @@ class CierreCajaWindow(QWidget):
     
     cerrar_solicitado = Signal()
     
-    def __init__(self, pg_manager, supabase_service, user_data, parent=None):
+    def __init__(self, pg_manager, user_data, parent=None):
         super().__init__(parent)
         self.pg_manager = pg_manager
-        self.supabase_service = supabase_service
         self.user_data = user_data
         self.turno_abierto = None
         
@@ -53,14 +52,11 @@ class CierreCajaWindow(QWidget):
     def verificar_turno_abierto(self):
         """Verificar si el usuario tiene un turno abierto"""
         try:
-            response = self.pg_manager.client.table('turnos_caja').select(
-                'id_turno, monto_inicial, fecha_apertura'
-            ).eq('id_usuario', self.user_data['id_usuario']).eq(
-                'cerrado', False
-            ).order('fecha_apertura', desc=True).limit(1).execute()
+            # Usar el método get_turno_activo de PostgreSQL
+            turno = self.pg_manager.get_turno_activo(self.user_data['id_usuario'])
             
-            if response.data and len(response.data) > 0:
-                self.turno_abierto = response.data[0]
+            if turno:
+                self.turno_abierto = turno
                 return True
             return False
                 
@@ -155,8 +151,8 @@ class CierreCajaWindow(QWidget):
         cash_layout.setSpacing(15)
         
         # Título
-        title = SectionTitle("CONTEO DE EFECTIVO")
-        cash_layout.addWidget(title)
+        #title = SectionTitle("")
+        #cash_layout.addWidget(title)
         
         # Grid simplificado
         form_layout = QGridLayout()
@@ -236,14 +232,21 @@ class CierreCajaWindow(QWidget):
             # Obtener monto inicial del turno
             monto_inicial = float(self.turno_abierto.get('monto_inicial', 0))
             
-            # Obtener ventas del turno actual usando Supabase
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).eq('id_turno', self.turno_abierto['id_turno']).order('fecha', desc=True).execute()
-            
-            ventas = response.data or []
-            total_ventas_turno = sum(float(v.get('total', 0)) for v in ventas)
-            num_ventas = len(ventas)
+            # Obtener ventas del turno actual desde PostgreSQL
+            try:
+                ventas = self.pg_manager.query(f"""
+                    SELECT id_venta, fecha, total, id_vendedor
+                    FROM ventas
+                    WHERE id_turno = {self.turno_abierto['id_turno']}
+                    ORDER BY fecha DESC
+                """)
+                
+                total_ventas_turno = sum(float(v.get('total', 0)) for v in ventas)
+                num_ventas = len(ventas)
+            except Exception as e:
+                logging.error(f"Error obteniendo ventas del turno: {e}")
+                total_ventas_turno = 0
+                num_ventas = 0
             
             # Total esperado = monto inicial + ventas del turno
             total_esperado = monto_inicial + total_ventas_turno
@@ -422,7 +425,7 @@ class CierreCajaWindow(QWidget):
             from ui.admin_auth_dialog import AdminAuthDialog
             dialog = AdminAuthDialog(self.pg_manager, motivo, self)
             
-            if dialog.exec() != dialog.Accepted:
+            if dialog.exec() != QDialog.Accepted:
                 # Autorización cancelada o denegada
                 return
             
@@ -496,16 +499,11 @@ class CierreCajaWindow(QWidget):
                 )
                 notas_cierre = (notas_cierre + auth_info) if notas_cierre else auth_info.strip()
             
-            # Actualizar turno existente
-            self.pg_manager.client.table('turnos_caja').update({
-                'fecha_cierre': datetime.now().isoformat(),
-                'total_ventas_efectivo': cierre_data['total_esperado'],
-                'monto_esperado': float(self.turno_abierto['monto_inicial']) + cierre_data['total_esperado'],
-                'monto_real_cierre': cierre_data['total_contado'],
-                'diferencia': cierre_data['diferencia'],
-                'cerrado': True,
-                'notas_apertura': (self.turno_abierto.get('notas_apertura', '') or '') + ('\n' + notas_cierre if self.turno_abierto.get('notas_apertura') else notas_cierre)
-            }).eq('id_turno', self.turno_abierto['id_turno']).execute()
+            # Actualizar turno existente usando PostgresManager
+            self.pg_manager.cerrar_turno_caja(
+                self.turno_abierto['id_turno'], 
+                cierre_data['total_contado']
+            )
             
             logging.info("Cierre de caja registrado correctamente")
                 

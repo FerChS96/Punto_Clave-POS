@@ -187,20 +187,14 @@ class AbrirTurnoDialog(QDialog):
                 show_error_dialog(self, "Error", "El monto inicial no puede ser negativo")
                 return
             
-            # Crear registro de turno
-            turno_data = {
-                'id_usuario': self.user_data['id_usuario'],
-                'fecha_apertura': datetime.now().isoformat(),
-                'monto_inicial': float(monto_inicial),
-                'monto_esperado': float(monto_inicial),  # Inicialmente el esperado es igual al inicial
-                'notas_apertura': f"Turno iniciado automáticamente - {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-                'cerrado': False
-            }
+            # Usar el método abrir_turno_caja de PostgresManager
+            turno_id = self.pg_manager.abrir_turno_caja(
+                id_usuario=self.user_data['id_usuario'],
+                monto_inicial=Decimal(str(monto_inicial))
+            )
             
-            response = self.pg_manager.client.table('turnos_caja').insert(turno_data).execute()
-            
-            if response.data:
-                self.turno_id = response.data[0]['id_turno']
+            if turno_id:
+                self.turno_id = turno_id
                 logging.info(f"Turno {self.turno_id} abierto para usuario {self.user_data['nombre_completo']} con monto inicial ${monto_inicial:.2f}")
                 
                 show_success_dialog(

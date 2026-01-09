@@ -1,8 +1,7 @@
 """
-Gestor de Base de Datos Supabase para Sistema de Gimnasio
-Reemplaza PostgreSQL local con Supabase (PostgreSQL en la nube)
-Compatible con el esquema HTF_sql.txt
-ACTUALIZADO: Usa Supabase como backend único
+Gestor de Base de Datos PostgreSQL para Sistema POS
+Compatible con el esquema POS_sql.txt
+Usa PostgreSQL local o en servidor dedicado
 """
 
 import logging
@@ -11,15 +10,15 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
-import sys
-import io
+import traceback
 
 try:
-    from supabase import create_client, Client
-    SUPABASE_AVAILABLE = True
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    PSYCOPG2_AVAILABLE = True
 except ImportError:
-    SUPABASE_AVAILABLE = False
-    logging.warning("Supabase no está instalado. Instala con: pip install supabase")
+    PSYCOPG2_AVAILABLE = False
+    logging.warning("psycopg2 no está instalado. Instala con: pip install psycopg2-binary")
 
 # Configurar logging
 logging.basicConfig(
@@ -29,67 +28,58 @@ logging.basicConfig(
 
 
 class PostgresManager:
-    """Gestor de conexión y operaciones con Supabase"""
+    """Gestor de conexión y operaciones con PostgreSQL"""
     
     def __init__(self, db_config: Dict[str, str]):
         """
-        Inicializar conexión a Supabase
+        Inicializar conexión a PostgreSQL
         
         Args:
             db_config: Diccionario con la configuración de conexión
                 {
-                    'url': 'https://xxxx.supabase.co',
-                    'key': 'eyJhbGciOiJIUzI1NiIs...',
-                    # Los parámetros de PostgreSQL se ignoran ahora
-                    'host': 'ignorado',
-                    'port': 'ignorado',
-                    'database': 'ignorado',
-                    'user': 'ignorado',
-                    'password': 'ignorado'
+                    'host': 'localhost',
+                    'port': '5432',
+                    'database': 'nombre_db',
+                    'user': 'usuario',
+                    'password': 'contraseña'
                 }
         """
         self.db_config = db_config
-        self.client: Optional[Client] = None
-        self.supabase_key = None  # Almacenar la key para llamadas HTTP
+        self.connection = None
         self.is_connected = False
         self.connect()
     
     def connect(self):
-        """Establecer conexión con Supabase"""
+        """Establecer conexión con PostgreSQL"""
         try:
-            if not SUPABASE_AVAILABLE:
-                logging.error("Supabase no está disponible. Instala con: pip install supabase")
-                raise ImportError("Supabase library not installed")
+            if not PSYCOPG2_AVAILABLE:
+                logging.error("psycopg2 no está disponible. Instala con: pip install psycopg2-binary")
+                raise ImportError("psycopg2 library not installed")
             
-            # Obtener credenciales de Supabase
-            url = self.db_config.get('url') or os.getenv('SUPABASE_URL')
-            # Usar SUPABASE_ROLE_KEY (service role) para bypasear RLS, fallback a SUPABASE_KEY
-            key = self.db_config.get('key') or os.getenv('SUPABASE_ROLE_KEY') or os.getenv('SUPABASE_KEY')
+            # Conectar a PostgreSQL
+            self.connection = psycopg2.connect(
+                host=self.db_config.get('host', 'localhost'),
+                port=self.db_config.get('port', '5432'),
+                database=self.db_config.get('database'),
+                user=self.db_config.get('user'),
+                password=self.db_config.get('password'),
+                cursor_factory=RealDictCursor
+            )
             
-            if not url or not key:
-                logging.error("Credenciales de Supabase no configuradas. Configura SUPABASE_URL y SUPABASE_ROLE_KEY (o SUPABASE_KEY)")
-                raise ValueError("Missing Supabase credentials")
-            
-            # Almacenar la key para uso en llamadas HTTP
-            self.supabase_key = key
-            
-            # Crear cliente de Supabase
-            self.client = create_client(url, key)
-            
-            # Probar conexión
-            response = self.client.table('usuarios').select('id_usuario').limit(1).execute()
             self.is_connected = True
-            logging.info("[OK] Conexión exitosa a Supabase")
+            logging.info("✅ Conexión exitosa a PostgreSQL")
             
         except Exception as e:
-            logging.error(f"[ERROR] Error conectando a Supabase: {e}")
+            logging.error(f"❌ Error conectando a PostgreSQL: {e}")
             self.is_connected = False
             raise
     
     def close(self):
-        """Cerrar conexión (Supabase no requiere cerrar explícitamente)"""
-        self.is_connected = False
-        # Don't log during cleanup to avoid shutdown race conditions
+        """Cerrar conexión a PostgreSQL"""
+        if self.connection:
+            self.connection.close()
+            self.is_connected = False
+            logging.info("Conexión a PostgreSQL cerrada")
     
     def close_connection(self):
         """Alias para compatibilidad"""
@@ -99,24 +89,124 @@ class PostgresManager:
         """Destructor para cerrar conexión"""
         try:
             self.close()
-        except Exception:
-            # Ignore errors during cleanup, logging might be closed
+        except:
             pass
     
     def initialize_database(self):
-        """Verificar que la base de datos esté disponible en Supabase"""
+        """Verificar que la base de datos esté disponible"""
         try:
-            if not self.is_connected:
+            if not self.is_connected or not self.connection or self.connection.closed:
                 self.connect()
             
             # Probar acceso a tabla usuarios
-            response = self.client.table('usuarios').select('id_usuario').limit(1).execute()
-            logging.info("[OK] Base de datos Supabase verificada correctamente")
+            with self.connection.cursor() as cursor:
+                cursor.execute("SELECT id_usuario FROM usuarios LIMIT 1")
+            
+            logging.info("✅ Base de datos PostgreSQL verificada correctamente")
             return True
             
         except Exception as e:
-            logging.error(f"[ERROR] Error verificando base de datos: {e}")
+            logging.error(f"❌ Error verificando base de datos: {e}")
             return False
+    
+    # ========== UTILIDADES ==========
+    
+    def query(self, sql: str, params: tuple = None) -> List[Dict]:
+        """
+        Ejecutar una consulta SELECT y devolver resultados como lista de diccionarios.
+        
+        Args:
+            sql: Sentencia SQL SELECT
+            params: Tupla de parámetros para la consulta (opcional)
+            
+        Returns:
+            Lista de diccionarios con los resultados
+        """
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                if params:
+                    cursor.execute(sql, params)
+                else:
+                    cursor.execute(sql)
+                
+                results = cursor.fetchall()
+                return results if results else []
+        except Exception as e:
+            logging.error(f"Error en query: {e}")
+            return []
+    
+    def execute(self, sql: str, params: tuple = None) -> bool:
+        """
+        Ejecutar una consulta INSERT, UPDATE o DELETE.
+        
+        Args:
+            sql: Sentencia SQL INSERT, UPDATE o DELETE
+            params: Tupla de parámetros para la consulta (opcional)
+            
+        Returns:
+            True si la operación fue exitosa, False si falló
+        """
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                if params:
+                    cursor.execute(sql, params)
+                else:
+                    cursor.execute(sql)
+                
+                # Confirmar la transacción
+                self.connection.commit()
+                return True
+        except Exception as e:
+            logging.error(f"Error en execute: {e}")
+            # Hacer rollback en caso de error
+            try:
+                self.connection.rollback()
+            except:
+                pass
+            return False
+    
+    def execute_with_returning(self, sql: str, params: tuple = None) -> Optional[int]:
+        """
+        Ejecutar una consulta INSERT con RETURNING y devolver el ID generado.
+        
+        Args:
+            sql: Sentencia SQL INSERT con RETURNING
+            params: Tupla de parámetros para la consulta (opcional)
+            
+        Returns:
+            ID generado por la inserción, o None si falló
+        """
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                if params:
+                    cursor.execute(sql, params)
+                else:
+                    cursor.execute(sql)
+                
+                # Obtener el ID retornado
+                result = cursor.fetchone()
+                self.connection.commit()
+                
+                if result:
+                    return result[0] if isinstance(result, (tuple, list)) else result
+                return None
+        except Exception as e:
+            logging.error(f"Error en execute_with_returning: {e}")
+            # Hacer rollback en caso de error
+            try:
+                self.connection.rollback()
+            except:
+                pass
+            return None
     
     # ========== AUTENTICACIÓN ==========
     
@@ -132,35 +222,46 @@ class PostgresManager:
             dict con información del usuario si la autenticación es exitosa, None si falla
         """
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            # Consultar usuario por nombre de usuario
-            response = self.client.table('usuarios').select('*').eq('nombre_usuario', username).eq('activo', True).execute()
-            
-            if not response.data:
-                logging.warning(f"Usuario no encontrado o inactivo: {username}")
-                return None
-            
-            user = response.data[0]
-            stored_password = user['contrasenia']
-            
-            # Verificar la contraseña usando bcrypt
-            if bcrypt.checkpw(password.encode('utf-8'), stored_password.encode('utf-8')):
-                logging.info(f"[OK] Autenticación exitosa para usuario: {username}")
+            with self.connection.cursor() as cursor:
+                # Consultar usuario por nombre de usuario
+                cursor.execute("""
+                    SELECT id_usuario, nombre_usuario, contrasenia, nombre_completo, rol
+                    FROM usuarios
+                    WHERE nombre_usuario = %s AND activo = TRUE
+                """, (username,))
                 
-                # Actualizar último acceso
-                self.client.table('usuarios').update({'ultimo_acceso': datetime.now().isoformat()}).eq('id_usuario', user['id_usuario']).execute()
+                user = cursor.fetchone()
                 
-                return {
-                    "id_usuario": user['id_usuario'],
-                    "username": user['nombre_usuario'],
-                    "nombre_completo": user['nombre_completo'],
-                    "rol": user['rol']
-                }
-            else:
-                logging.warning(f"Contraseña incorrecta para usuario: {username}")
-                return None
+                if not user:
+                    logging.warning(f"Usuario no encontrado o inactivo: {username}")
+                    return None
+                
+                stored_password = user['contrasenia']
+                
+                # Verificar la contraseña usando bcrypt
+                if bcrypt.checkpw(password.encode('utf-8'), stored_password.encode('utf-8')):
+                    logging.info(f"✅ Autenticación exitosa para usuario: {username}")
+                    
+                    # Actualizar último acceso
+                    cursor.execute("""
+                        UPDATE usuarios 
+                        SET ultimo_acceso = %s 
+                        WHERE id_usuario = %s
+                    """, (datetime.now(), user['id_usuario']))
+                    self.connection.commit()
+                    
+                    return {
+                        "id_usuario": user['id_usuario'],
+                        "username": user['nombre_usuario'],
+                        "nombre_completo": user['nombre_completo'],
+                        "rol": user['rol']
+                    }
+                else:
+                    logging.warning(f"Contraseña incorrecta para usuario: {username}")
+                    return None
                 
         except Exception as e:
             logging.error(f"Error durante la autenticación: {e}")
@@ -168,7 +269,7 @@ class PostgresManager:
     
     def create_user(self, username: str, password: str, nombre_completo: str, rol: str = "recepcionista") -> Optional[int]:
         """
-        Crear un nuevo usuario en Supabase.
+        Crear un nuevo usuario en PostgreSQL.
         
         Args:
             username: Nombre de usuario (mínimo 3 caracteres)
@@ -180,7 +281,7 @@ class PostgresManager:
             ID del usuario creado, o None si hay error
         """
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
             # Validar longitud del nombre de usuario
@@ -188,37 +289,36 @@ class PostgresManager:
                 logging.error("El nombre de usuario debe tener al menos 3 caracteres")
                 return None
             
-            # Verificar si el usuario ya existe
-            response = self.client.table('usuarios').select('id_usuario').eq('nombre_usuario', username).execute()
-            
-            if response.data:
-                logging.warning(f"El usuario '{username}' ya existe")
-                return None
-            
-            # Hashear la contraseña
-            salt = bcrypt.gensalt()
-            hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
-            
-            # Insertar nuevo usuario
-            user_data = {
-                'nombre_usuario': username,
-                'contrasenia': hashed_password,
-                'nombre_completo': nombre_completo,
-                'rol': rol,
-                'activo': True
-            }
-            
-            response = self.client.table('usuarios').insert(user_data).execute()
-            
-            if response.data:
-                user_id = response.data[0]['id_usuario']
-                logging.info(f"[OK] Usuario '{username}' creado exitosamente con ID: {user_id}")
+            with self.connection.cursor() as cursor:
+                # Verificar si el usuario ya existe
+                cursor.execute("SELECT id_usuario FROM usuarios WHERE nombre_usuario = %s", (username,))
+                
+                if cursor.fetchone():
+                    logging.warning(f"El usuario '{username}' ya existe")
+                    return None
+                
+                # Hashear la contraseña
+                salt = bcrypt.gensalt()
+                hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+                
+                # Insertar nuevo usuario
+                cursor.execute("""
+                    INSERT INTO usuarios (nombre_usuario, contrasenia, nombre_completo, rol, activo)
+                    VALUES (%s, %s, %s, %s::tipo_rol_usuario, TRUE)
+                    RETURNING id_usuario
+                """, (username, hashed_password, nombre_completo, rol))
+                
+                user_id = cursor.fetchone()['id_usuario']
+                self.connection.commit()
+                
+                logging.info(f"✅ Usuario '{username}' creado exitosamente con ID: {user_id}")
                 return user_id
-            else:
-                logging.error(f"No se pudo crear el usuario '{username}'")
-                return None
                 
         except Exception as e:
+            try:
+                self.connection.rollback()
+            except:
+                pass
             logging.error(f"Error al crear usuario: {e}")
             return None
     
@@ -234,33 +334,40 @@ class PostgresManager:
             True si se actualizó exitosamente, False en caso contrario
         """
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            # Obtener usuario
-            response = self.client.table('usuarios').select('id_usuario').eq('nombre_usuario', username).execute()
-            
-            if not response.data:
-                logging.warning(f"Usuario no encontrado: {username}")
-                return False
-            
-            user_id = response.data[0]['id_usuario']
-            
-            # Hashear la nueva contraseña
-            salt = bcrypt.gensalt()
-            hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), salt).decode('utf-8')
-            
-            # Actualizar contraseña
-            update_response = self.client.table('usuarios').update({'contrasenia': hashed_password}).eq('id_usuario', user_id).execute()
-            
-            if update_response.data:
-                logging.info(f"[OK] Contraseña actualizada para usuario: {username}")
+            with self.connection.cursor() as cursor:
+                # Obtener usuario
+                cursor.execute("SELECT id_usuario FROM usuarios WHERE nombre_usuario = %s", (username,))
+                user = cursor.fetchone()
+                
+                if not user:
+                    logging.warning(f"Usuario no encontrado: {username}")
+                    return False
+                
+                user_id = user['id_usuario']
+                
+                # Hashear la nueva contraseña
+                salt = bcrypt.gensalt()
+                hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), salt).decode('utf-8')
+                
+                # Actualizar contraseña
+                cursor.execute("""
+                    UPDATE usuarios 
+                    SET contrasenia = %s 
+                    WHERE id_usuario = %s
+                """, (hashed_password, user_id))
+                
+                self.connection.commit()
+                logging.info(f"✅ Contraseña actualizada para usuario: {username}")
                 return True
-            else:
-                logging.error(f"No se pudo actualizar la contraseña para {username}")
-                return False
                     
         except Exception as e:
+            try:
+                self.connection.rollback()
+            except:
+                pass
             logging.error(f"Error al actualizar contraseña: {e}")
             return False
     
@@ -269,926 +376,487 @@ class PostgresManager:
     def get_all_products(self) -> List[Dict]:
         """Obtener todos los productos activos con stock"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            productos_resultado = []
-            
-            # Obtener productos varios
-            response_varios = self.client.table('ca_productos_varios').select(
-                'id_producto, codigo_interno, nombre, precio_venta, categoria, codigo_barras'
-            ).eq('activo', True).execute()
-            
-            # Obtener suplementos
-            response_suplementos = self.client.table('ca_suplementos').select(
-                'id_suplemento, codigo_interno, nombre, precio_venta, tipo, codigo_barras'
-            ).eq('activo', True).execute()
-            
-            # Procesar productos varios
-            for prod_varios in (response_varios.data or []):
-                codigo_interno = prod_varios.get('codigo_interno')
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        p.id_producto, p.codigo_interno, p.codigo_barras, p.nombre,
+                        p.descripcion, p.precio_venta, p.precio_mayoreo,
+                        p.cantidad_mayoreo, p.costo_promedio, p.es_inventariable,
+                        COALESCE(SUM(i.stock_actual), 0) AS stock_actual,
+                        COALESCE(SUM(i.stock_disponible), 0) AS stock_disponible
+                    FROM ca_productos p
+                    LEFT JOIN inventario i ON p.id_producto = i.id_producto AND i.activo = TRUE
+                    WHERE p.activo = TRUE
+                    GROUP BY p.id_producto
+                    ORDER BY p.nombre
+                """)
                 
-                # Obtener stock del inventario
-                inv_response = self.client.table('inventario').select(
-                    'stock_actual, stock_minimo, id_ubicacion'
-                ).eq('codigo_interno', codigo_interno).eq('tipo_producto', 'varios').execute()
-                
-                stock_actual = 0
-                stock_minimo = 0
-                id_ubicacion = None
-                if inv_response.data:
-                    inv = inv_response.data[0]
-                    stock_actual = inv.get('stock_actual', 0)
-                    stock_minimo = inv.get('stock_minimo', 0)
-                    id_ubicacion = inv.get('id_ubicacion')
-                
-                productos_resultado.append({
-                    'id_producto': prod_varios.get('id_producto'),
-                    'codigo_interno': codigo_interno,
-                    'nombre': prod_varios.get('nombre'),
-                    'precio_venta': float(prod_varios.get('precio_venta', 0.0)),
-                    'categoria': prod_varios.get('categoria', 'General'),
-                    'codigo_barras': prod_varios.get('codigo_barras'),
-                    'stock_actual': stock_actual,
-                    'stock_minimo': stock_minimo,
-                    'tipo_producto': 'varios',
-                    'id_ubicacion': id_ubicacion
-                })
-            
-            # Procesar suplementos
-            for prod_suplemento in (response_suplementos.data or []):
-                codigo_interno = prod_suplemento.get('codigo_interno')
-                
-                # Obtener stock del inventario
-                inv_response = self.client.table('inventario').select(
-                    'stock_actual, stock_minimo, id_ubicacion'
-                ).eq('codigo_interno', codigo_interno).eq('tipo_producto', 'suplemento').execute()
-                
-                stock_actual = 0
-                stock_minimo = 0
-                id_ubicacion = None
-                if inv_response.data:
-                    inv = inv_response.data[0]
-                    stock_actual = inv.get('stock_actual', 0)
-                    stock_minimo = inv.get('stock_minimo', 0)
-                    id_ubicacion = inv.get('id_ubicacion')
-                
-                productos_resultado.append({
-                    'id_producto': prod_suplemento.get('id_suplemento'),  # Usar id_suplemento como id_producto
-                    'codigo_interno': codigo_interno,
-                    'nombre': prod_suplemento.get('nombre'),
-                    'precio_venta': float(prod_suplemento.get('precio_venta', 0.0)),
-                    'categoria': prod_suplemento.get('tipo', 'Suplemento'),
-                    'codigo_barras': prod_suplemento.get('codigo_barras'),
-                    'stock_actual': stock_actual,
-                    'stock_minimo': stock_minimo,
-                    'tipo_producto': 'suplemento',
-                    'id_ubicacion': id_ubicacion
-                })
-            
-            logging.info(f"Obtenidos {len(productos_resultado)} productos activos (con stock)")
-            return productos_resultado
+                productos = cursor.fetchall()
+                logging.info(f"Obtenidos {len(productos)} productos activos")
+                return productos
         
         except Exception as e:
             logging.error(f"Error obteniendo productos: {e}")
             return []
     
     def search_products(self, search_text: str) -> List[Dict]:
-        """Buscar productos por código o nombre (CON STOCK INCLUIDO)"""
+        """Buscar productos por código o nombre, o listar todos si vacío"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            search_pattern = f"%{search_text}%"
-            productos_resultado = []
-            
-            # Buscar en productos varios
-            response_varios = self.client.table('ca_productos_varios').select(
-                'id_producto, codigo_interno, nombre, precio_venta, categoria, codigo_barras'
-            ).or_(
-                f"nombre.ilike.{search_pattern},codigo_barras.ilike.{search_pattern},codigo_interno.ilike.{search_pattern}"
-            ).eq('activo', True).execute()
-            
-            # Buscar en suplementos
-            response_suplementos = self.client.table('ca_suplementos').select(
-                'id_suplemento, codigo_interno, nombre, precio_venta, tipo, codigo_barras'
-            ).or_(
-                f"nombre.ilike.{search_pattern},codigo_barras.ilike.{search_pattern},codigo_interno.ilike.{search_pattern}"
-            ).eq('activo', True).execute()
-            
-            # Procesar productos varios
-            for prod_varios in (response_varios.data or []):
-                codigo_interno = prod_varios.get('codigo_interno')
+            with self.connection.cursor() as cursor:
+                if search_text.strip():
+                    # Búsqueda con texto
+                    search_pattern = f"%{search_text}%"
+                    cursor.execute("""
+                        SELECT 
+                            p.id_producto, p.codigo_interno, p.codigo_barras, p.nombre,
+                            p.descripcion, p.precio_venta, p.costo_promedio,
+                            COALESCE(SUM(i.stock_actual), 0) AS stock_actual,
+                            COALESCE(SUM(i.stock_disponible), 0) AS stock_disponible
+                        FROM ca_productos p
+                        LEFT JOIN inventario i ON p.id_producto = i.id_producto AND i.activo = TRUE
+                        WHERE p.activo = TRUE
+                            AND (p.nombre ILIKE %s OR p.codigo_barras ILIKE %s OR p.codigo_interno ILIKE %s)
+                        GROUP BY p.id_producto
+                        ORDER BY p.id_producto
+                    """, (search_pattern, search_pattern, search_pattern))
+                else:
+                    # Listar todos ordenados por ID
+                    cursor.execute("""
+                        SELECT 
+                            p.id_producto, p.codigo_interno, p.codigo_barras, p.nombre,
+                            p.descripcion, p.precio_venta, p.costo_promedio,
+                            COALESCE(SUM(i.stock_actual), 0) AS stock_actual,
+                            COALESCE(SUM(i.stock_disponible), 0) AS stock_disponible
+                        FROM ca_productos p
+                        LEFT JOIN inventario i ON p.id_producto = i.id_producto AND i.activo = TRUE
+                        WHERE p.activo = TRUE
+                        GROUP BY p.id_producto
+                        ORDER BY p.id_producto
+                    """)
                 
-                # Obtener stock del inventario
-                inv_response = self.client.table('inventario').select(
-                    'stock_actual, stock_minimo, id_ubicacion'
-                ).eq('codigo_interno', codigo_interno).eq('tipo_producto', 'varios').execute()
-                
-                stock_actual = 0
-                stock_minimo = 0
-                id_ubicacion = None
-                if inv_response.data:
-                    inv = inv_response.data[0]
-                    stock_actual = inv.get('stock_actual', 0)
-                    stock_minimo = inv.get('stock_minimo', 0)
-                    id_ubicacion = inv.get('id_ubicacion')
-                
-                productos_resultado.append({
-                    'id_producto': prod_varios.get('id_producto'),
-                    'codigo_interno': codigo_interno,
-                    'nombre': prod_varios.get('nombre'),
-                    'precio_venta': float(prod_varios.get('precio_venta', 0.0)),
-                    'categoria': prod_varios.get('categoria', 'General'),
-                    'codigo_barras': prod_varios.get('codigo_barras'),
-                    'stock_actual': stock_actual,
-                    'stock_minimo': stock_minimo,
-                    'tipo_producto': 'varios',
-                    'id_ubicacion': id_ubicacion
-                })
-            
-            # Procesar suplementos
-            for prod_suplemento in (response_suplementos.data or []):
-                codigo_interno = prod_suplemento.get('codigo_interno')
-                
-                # Obtener stock del inventario
-                inv_response = self.client.table('inventario').select(
-                    'stock_actual, stock_minimo, id_ubicacion'
-                ).eq('codigo_interno', codigo_interno).eq('tipo_producto', 'suplemento').execute()
-                
-                stock_actual = 0
-                stock_minimo = 0
-                id_ubicacion = None
-                if inv_response.data:
-                    inv = inv_response.data[0]
-                    stock_actual = inv.get('stock_actual', 0)
-                    stock_minimo = inv.get('stock_minimo', 0)
-                    id_ubicacion = inv.get('id_ubicacion')
-                
-                productos_resultado.append({
-                    'id_producto': prod_suplemento.get('id_suplemento'),  # Usar id_suplemento como id_producto
-                    'codigo_interno': codigo_interno,
-                    'nombre': prod_suplemento.get('nombre'),
-                    'precio_venta': float(prod_suplemento.get('precio_venta', 0.0)),
-                    'categoria': prod_suplemento.get('tipo', 'Suplemento'),
-                    'codigo_barras': prod_suplemento.get('codigo_barras'),
-                    'stock_actual': stock_actual,
-                    'stock_minimo': stock_minimo,
-                    'tipo_producto': 'suplemento',
-                    'id_ubicacion': id_ubicacion
-                })
-            
-            logging.info(f"Encontrados {len(productos_resultado)} productos para '{search_text}'")
-            return productos_resultado
+                productos = cursor.fetchall()
+                logging.info(f"Encontrados {len(productos)} productos para '{search_text}'")
+                return productos
             
         except Exception as e:
             logging.error(f"Error buscando productos: {e}")
             return []
     
-    def get_product_by_barcode(self, barcode: str) -> Optional[Dict]:
-        """Buscar producto por código de barras (RÁPIDO - búsqueda exacta con stock incluido)"""
-        import time
-        tiempo_inicio = time.perf_counter()
-        
+    def obtener_movimientos_completos(self, limite: int = 1000) -> List[Dict]:
+        """Obtener movimientos de inventario completos con información de productos y usuarios"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            # Buscar en productos varios
-            tiempo_varios = time.perf_counter()
-            response_varios = self.client.table('ca_productos_varios').select(
-                'id_producto, codigo_interno, nombre, precio_venta, categoria, codigo_barras'
-            ).eq('codigo_barras', barcode).eq('activo', True).execute()
-            tiempo_varios_ms = (time.perf_counter() - tiempo_varios) * 1000
-            
-            if response_varios.data:
-                prod_varios = response_varios.data[0]
-                codigo_interno = prod_varios.get('codigo_interno')
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        mi.id_movimiento,
+                        mi.fecha,
+                        mi.tipo_movimiento,
+                        p.codigo_interno,
+                        'varios'::tipo_producto_detalle as tipo_producto,  -- Default value since not stored in movimientos
+                        mi.cantidad,
+                        mi.stock_anterior,
+                        mi.stock_nuevo,
+                        mi.motivo,
+                        mi.id_usuario,
+                        mi.id_venta,
+                        p.nombre as nombre_producto,
+                        u.nombre_completo as nombre_usuario
+                    FROM movimientos_inventario mi
+                    INNER JOIN ca_productos p ON mi.id_producto = p.id_producto
+                    INNER JOIN usuarios u ON mi.id_usuario = u.id_usuario
+                    ORDER BY mi.fecha DESC
+                    LIMIT %s
+                """, (limite,))
                 
-                # Obtener stock del inventario
-                tiempo_stock = time.perf_counter()
-                inv_response = self.client.table('inventario').select(
-                    'stock_actual, stock_minimo, id_ubicacion'
-                ).eq('codigo_interno', codigo_interno).eq('tipo_producto', 'varios').execute()
-                tiempo_stock_ms = (time.perf_counter() - tiempo_stock) * 1000
-                
-                stock_actual = 0
-                stock_minimo = 0
-                id_ubicacion = None
-                if inv_response.data:
-                    inv = inv_response.data[0]
-                    stock_actual = inv.get('stock_actual', 0)
-                    stock_minimo = inv.get('stock_minimo', 0)
-                    id_ubicacion = inv.get('id_ubicacion')
-                
-                tiempo_total_ms = (time.perf_counter() - tiempo_inicio) * 1000
-                logging.info(f"✓ Encontrado en ca_productos_varios: {tiempo_varios_ms:.1f}ms + stock: {tiempo_stock_ms:.1f}ms = {tiempo_total_ms:.1f}ms total")
-                
-                return {
-                    'id_producto': prod_varios.get('id_producto'),
-                    'codigo_interno': codigo_interno,
-                    'nombre': prod_varios.get('nombre'),
-                    'precio_venta': float(prod_varios.get('precio_venta', 0.0)),
-                    'categoria': prod_varios.get('categoria', 'General'),
-                    'codigo_barras': prod_varios.get('codigo_barras'),
-                    'stock_actual': stock_actual,
-                    'stock_minimo': stock_minimo,
-                    'tipo_producto': 'varios',
-                    'id_ubicacion': id_ubicacion
-                }
-            
-            # Buscar en suplementos
-            tiempo_suplementos = time.perf_counter()
-            response_suplementos = self.client.table('ca_suplementos').select(
-                'id_suplemento, codigo_interno, nombre, precio_venta, tipo, codigo_barras'
-            ).eq('codigo_barras', barcode).eq('activo', True).execute()
-            tiempo_suplementos_ms = (time.perf_counter() - tiempo_suplementos) * 1000
-            
-            if response_suplementos.data:
-                prod_suplemento = response_suplementos.data[0]
-                codigo_interno = prod_suplemento.get('codigo_interno')
-                
-                # Obtener stock del inventario
-                tiempo_stock = time.perf_counter()
-                inv_response = self.client.table('inventario').select(
-                    'stock_actual, stock_minimo, id_ubicacion'
-                ).eq('codigo_interno', codigo_interno).eq('tipo_producto', 'suplemento').execute()
-                tiempo_stock_ms = (time.perf_counter() - tiempo_stock) * 1000
-                
-                stock_actual = 0
-                stock_minimo = 0
-                id_ubicacion = None
-                if inv_response.data:
-                    inv = inv_response.data[0]
-                    stock_actual = inv.get('stock_actual', 0)
-                    stock_minimo = inv.get('stock_minimo', 0)
-                    id_ubicacion = inv.get('id_ubicacion')
-                
-                tiempo_total_ms = (time.perf_counter() - tiempo_inicio) * 1000
-                logging.info(f"✓ Encontrado en ca_suplementos: {tiempo_varios_ms:.1f}ms + {tiempo_suplementos_ms:.1f}ms + stock: {tiempo_stock_ms:.1f}ms = {tiempo_total_ms:.1f}ms total")
-                
-                return {
-                    'id_producto': prod_suplemento.get('id_suplemento'),
-                    'codigo_interno': codigo_interno,
-                    'nombre': prod_suplemento.get('nombre'),
-                    'precio_venta': float(prod_suplemento.get('precio_venta', 0.0)),
-                    'categoria': prod_suplemento.get('tipo', 'Suplemento'),
-                    'codigo_barras': prod_suplemento.get('codigo_barras'),
-                    'stock_actual': stock_actual,
-                    'stock_minimo': stock_minimo,
-                    'tipo_producto': 'suplemento',
-                    'id_ubicacion': id_ubicacion
-                }
-            
-            tiempo_total_ms = (time.perf_counter() - tiempo_inicio) * 1000
-            logging.warning(f"✗ Código de barras {barcode} no encontrado: {tiempo_varios_ms:.1f}ms + {tiempo_suplementos_ms:.1f}ms = {tiempo_total_ms:.1f}ms")
-            return None
-        
-        except Exception as e:
-            tiempo_total_ms = (time.perf_counter() - tiempo_inicio) * 1000
-            logging.error(f"Error buscando producto por código de barras ({tiempo_total_ms:.1f}ms): {e}")
-            return None
-    
-    def get_product_by_code(self, code: str) -> Optional[Dict]:
-        """Buscar producto por código interno"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            # Buscar en productos varios
-            response_varios = self.client.table('ca_productos_varios').select('*').eq('codigo_interno', code).eq('activo', True).execute()
-            
-            if response_varios.data:
-                return response_varios.data[0]
-            
-            # Buscar en suplementos
-            response_suplementos = self.client.table('ca_suplementos').select('*').eq('codigo_interno', code).eq('activo', True).execute()
-            
-            if response_suplementos.data:
-                return response_suplementos.data[0]
-            
-            logging.warning(f"Producto con código interno {code} no encontrado")
-            return None
-        
-        except Exception as e:
-            logging.error(f"Error buscando producto por código interno: {e}")
-            return None
-    
-    def get_product_with_stock(self, codigo_interno: str) -> Optional[Dict]:
-        """Obtener producto completo con stock actual desde inventario
-        
-        Busca el producto en ca_productos_varios o ca_suplementos y agrega el stock
-        desde la tabla inventario.
-        
-        Returns:
-            Dict con campos: nombre, precio_venta, stock_actual, tipo_producto, etc.
-            O None si no encuentra el producto
-        """
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            # Buscar en productos varios
-            response_varios = self.client.table('ca_productos_varios').select(
-                'codigo_interno, nombre, precio_venta, categoria, codigo_barras'
-            ).eq('codigo_interno', codigo_interno).eq('activo', True).execute()
-            
-            if response_varios.data:
-                producto = response_varios.data[0]
-                tipo_producto = 'varios'
-            else:
-                # Buscar en suplementos
-                response_suplementos = self.client.table('ca_suplementos').select(
-                    'codigo_interno, nombre, precio_venta, tipo, codigo_barras'
-                ).eq('codigo_interno', codigo_interno).eq('activo', True).execute()
-                
-                if response_suplementos.data:
-                    producto = response_suplementos.data[0]
-                    tipo_producto = 'suplemento'
-                else:
-                    logging.warning(f"Producto con código interno {codigo_interno} no encontrado")
-                    return None
-            
-            # Obtener stock del inventario
-            response_inventario = self.client.table('inventario').select(
-                'stock_actual, stock_minimo, id_ubicacion'
-            ).eq('codigo_interno', codigo_interno).eq('tipo_producto', tipo_producto).execute()
-            
-            stock_actual = 0
-            stock_minimo = 0
-            id_ubicacion = None
-            
-            if response_inventario.data:
-                inv = response_inventario.data[0]
-                stock_actual = inv.get('stock_actual', 0)
-                stock_minimo = inv.get('stock_minimo', 0)
-                id_ubicacion = inv.get('id_ubicacion')
-            
-            # Combinar datos
-            resultado = {
-                'codigo_interno': producto.get('codigo_interno'),
-                'nombre': producto.get('nombre'),
-                'precio_venta': float(producto.get('precio_venta', 0.0)),
-                'codigo_barras': producto.get('codigo_barras'),
-                'stock_actual': stock_actual,
-                'stock_minimo': stock_minimo,
-                'tipo_producto': tipo_producto,
-                'id_ubicacion': id_ubicacion
-            }
-            
-            # Agregar campo de categoría según tipo
-            if tipo_producto == 'varios':
-                resultado['categoria'] = producto.get('categoria', 'General')
-            else:
-                resultado['categoria'] = producto.get('tipo', 'Suplemento')
-            
-            return resultado
+                movimientos = cursor.fetchall()
+                logging.info(f"Encontrados {len(movimientos)} movimientos completos")
+                return movimientos
             
         except Exception as e:
-            logging.error(f"Error obteniendo producto con stock: {e}")
-            return None
-    
-    # ========== VENTAS ==========
-    
-    def create_sale(self, venta_data: Dict) -> Optional[int]:
-        """Crear nueva venta"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            # Calcular totales
-            subtotal = venta_data['total']
-            descuento = venta_data.get('descuento', 0)
-            impuestos = venta_data.get('impuestos', 0)
-            
-            # Preparar datos de venta
-            venta_insert = {
-                'id_usuario': venta_data['id_usuario'],
-                'id_miembro': venta_data.get('id_miembro'),
-                'id_turno': venta_data.get('id_turno'),  # Agregar ID del turno
-                'fecha': venta_data.get('fecha', datetime.now().isoformat()),
-                'subtotal': float(subtotal),
-                'descuento': float(descuento),
-                'impuestos': float(impuestos),
-                'total': float(venta_data['total']),
-                'metodo_pago': venta_data.get('metodo_pago', 'efectivo'),
-                'tipo_venta': venta_data.get('tipo_venta', 'producto'),
-                'estado': 'completada'
-            }
-            
-            # Insertar venta
-            response = self.client.table('ventas').insert(venta_insert).execute()
-            
-            if not response.data:
-                logging.error("Error insertando venta")
-                return None
-            
-            venta_id = response.data[0]['id_venta']
-            
-            # Insertar detalles y actualizar stock
-            for item in venta_data.get('productos', []):
-                # Obtener información del producto
-                producto_response = self.client.table('ca_productos_varios').select('codigo_interno, nombre, descripcion').eq('id_producto', item['id_producto']).execute()
-                
-                if not producto_response.data:
-                    logging.error(f"Producto {item['id_producto']} no encontrado")
-                    continue
-                
-                producto_info = producto_response.data[0]
-                codigo_interno = producto_info['codigo_interno']
-                
-                # Verificar stock
-                stock_response = self.client.table('inventario').select('stock_actual').eq('codigo_interno', codigo_interno).eq('tipo_producto', 'varios').execute()
-                
-                if not stock_response.data or stock_response.data[0]['stock_actual'] < item['cantidad']:
-                    logging.error(f"Stock insuficiente para {producto_info['nombre']}")
-                    continue
-                
-                # Insertar detalle
-                detalle_data = {
-                    'id_venta': venta_id,
-                    'codigo_interno': codigo_interno,
-                    'tipo_producto': 'varios',
-                    'cantidad': item['cantidad'],
-                    'precio_unitario': float(item['precio']),
-                    'subtotal_linea': float(item['subtotal']),
-                    'nombre_producto': producto_info['nombre'],
-                    'descripcion_producto': producto_info.get('descripcion')
-                }
-                
-                self.client.table('detalles_venta').insert(detalle_data).execute()
-                
-                # Actualizar stock
-                stock_anterior = stock_response.data[0]['stock_actual']
-                stock_nuevo = stock_anterior - item['cantidad']
-                
-                self.client.table('inventario').update({'stock_actual': stock_nuevo}).eq('codigo_interno', codigo_interno).eq('tipo_producto', 'varios').execute()
-                
-                # Registrar movimiento
-                movimiento_data = {
-                    'codigo_interno': codigo_interno,
-                    'tipo_producto': 'varios',
-                    'tipo_movimiento': 'venta',
-                    'cantidad': -item['cantidad'],
-                    'stock_anterior': stock_anterior,
-                    'stock_nuevo': stock_nuevo,
-                    'id_usuario': venta_data['id_usuario'],
-                    'id_venta': venta_id
-                }
-                
-                self.client.table('movimientos_inventario').insert(movimiento_data).execute()
-            
-            logging.info(f"✅ Venta creada: ID {venta_id}, Total: ${venta_data['total']:.2f}")
-            return venta_id
-            
-        except Exception as e:
-            logging.error(f"Error creando venta: {e}")
-            raise
-    
-    # ========== MIEMBROS Y ACCESO ==========
-    
-    def obtener_miembro_por_codigo_qr(self, codigo_qr: str) -> Optional[Dict]:
-        """Obtener miembro por código QR"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('miembros').select('*').eq('codigo_qr', codigo_qr).execute()
-            
-            if response.data:
-                return response.data[0]
-            
-            logging.warning(f"Miembro con código QR {codigo_qr} no encontrado")
-            return None
-                
-        except Exception as e:
-            logging.error(f"Error obteniendo miembro: {e}")
-            return None
-    
-    def get_total_members(self) -> int:
-        """Obtener total de miembros activos"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('miembros').select('id_miembro', count='exact').eq('activo', True).execute()
-            return response.count or 0
-        except Exception as e:
-            logging.error(f"Error obteniendo total de miembros: {e}")
-            return 0
-    
-    # ========== GESTIÓN DE PRODUCTOS E INVENTARIO ==========
-    
-    def producto_existe(self, codigo_interno: str) -> bool:
-        """Verificar si un código interno ya existe"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            # Buscar en productos varios
-            response_varios = self.client.table('ca_productos_varios').select('id_producto').eq('codigo_interno', codigo_interno).limit(1).execute()
-            
-            if response_varios.data:
-                return True
-            
-            # Buscar en suplementos
-            response_suplementos = self.client.table('ca_suplementos').select('id_suplemento').eq('codigo_interno', codigo_interno).limit(1).execute()
-            
-            if response_suplementos.data:
-                return True
-            
-            return False
-                
-        except Exception as e:
-            logging.error(f"Error verificando existencia de producto: {e}")
-            return False
-    
-    def insertar_producto_varios(self, producto_data: Dict) -> bool:
-        """Insertar un nuevo producto normal (varios) en Supabase"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            producto_insert = {
-                'codigo_interno': producto_data['codigo_interno'],
-                'codigo_barras': producto_data.get('codigo_barras'),
-                'nombre': producto_data['nombre'],
-                'descripcion': producto_data.get('descripcion'),
-                'precio_venta': float(producto_data['precio_venta']),
-                'categoria': producto_data.get('categoria', 'General'),
-                'requiere_refrigeracion': bool(producto_data.get('requiere_refrigeracion', False)),
-                'peso_gr': float(producto_data['peso_gr']) if producto_data.get('peso_gr') else None,
-                'activo': bool(producto_data.get('activo', True))
-            }
-            
-            response = self.client.table('ca_productos_varios').insert(producto_insert).execute()
-            
-            if response.data:
-                id_producto = response.data[0]['id_producto']
-                logging.info(f"✅ Producto varios '{producto_data['nombre']}' insertado con ID: {id_producto}")
-                return True
-            else:
-                logging.error(f"No se pudo insertar el producto '{producto_data['nombre']}'")
-                return False
-                
-        except Exception as e:
-            logging.error(f"Error insertando producto varios: {e}")
-            return False
-    
-    def insertar_suplemento(self, suplemento_data: Dict) -> bool:
-        """Insertar un nuevo suplemento en Supabase"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            suplemento_insert = {
-                'codigo_interno': suplemento_data['codigo_interno'],
-                'codigo_barras': suplemento_data.get('codigo_barras'),
-                'nombre': suplemento_data['nombre'],
-                'descripcion': suplemento_data.get('descripcion'),
-                'marca': suplemento_data['marca'],
-                'tipo': suplemento_data['tipo'],
-                'peso_neto_gr': float(suplemento_data['peso_neto_gr']) if suplemento_data.get('peso_neto_gr') else None,
-                'precio_venta': float(suplemento_data['precio_venta']),
-                'activo': bool(suplemento_data.get('activo', True)),
-                'fecha_vencimiento': suplemento_data.get('fecha_vencimiento')
-            }
-            
-            response = self.client.table('ca_suplementos').insert(suplemento_insert).execute()
-            
-            if response.data:
-                id_suplemento = response.data[0]['id_suplemento']
-                logging.info(f"✅ Suplemento '{suplemento_data['nombre']}' insertado con ID: {id_suplemento}")
-                return True
-            else:
-                logging.error(f"No se pudo insertar el suplemento '{suplemento_data['nombre']}'")
-                return False
-                
-        except Exception as e:
-            logging.error(f"Error insertando suplemento: {e}")
-            return False
-    
-    def crear_inventario(self, inventario_data: Dict) -> bool:
-        """Crear un registro de inventario para un producto físico"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            inventario_insert = {
-                'codigo_interno': inventario_data['codigo_interno'],
-                'tipo_producto': inventario_data['tipo_producto'],
-                'stock_actual': int(inventario_data.get('stock_actual', 0)),
-                'stock_minimo': int(inventario_data.get('stock_minimo', 5)),
-                'id_ubicacion': int(inventario_data.get('id_ubicacion', 1)),
-                'activo': bool(inventario_data.get('activo', True))
-            }
-            
-            response = self.client.table('inventario').insert(inventario_insert).execute()
-            
-            if response.data:
-                id_inventario = response.data[0]['id_inventario']
-                logging.info(f"✅ Inventario creado para '{inventario_data['codigo_interno']}' con ID: {id_inventario}")
-                return True
-            else:
-                logging.error(f"No se pudo crear inventario para '{inventario_data['codigo_interno']}'")
-                return False
-                
-        except Exception as e:
-            logging.error(f"Error creando inventario: {e}")
-            return False
+            logging.error(f"Error obteniendo movimientos completos: {e}")
+            return []
     
     def obtener_inventario_completo(self) -> List[Dict]:
-        """Obtener inventario completo con datos de productos (JOIN con ca_productos_varios, ca_suplementos y ca_ubicaciones)"""
+        """Obtener inventario completo con información de productos y ubicaciones"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            # Obtener inventario con productos varios
-            response_varios = self.client.table('inventario').select(
-                'id_inventario, codigo_interno, tipo_producto, stock_actual, stock_minimo, id_ubicacion, seccion, activo'
-            ).eq('tipo_producto', 'varios').eq('activo', True).execute()
-            
-            productos_varios = response_varios.data or []
-            
-            # Obtener inventario con suplementos
-            response_suplementos = self.client.table('inventario').select(
-                'id_inventario, codigo_interno, tipo_producto, stock_actual, stock_minimo, id_ubicacion, seccion, activo'
-            ).eq('tipo_producto', 'suplemento').eq('activo', True).execute()
-            
-            productos_suplementos = response_suplementos.data or []
-            
-            # Obtener todas las ubicaciones para mapeo
-            ubicaciones_map = {}
-            try:
-                response_ubicaciones = self.client.table('ca_ubicaciones').select(
-                    'id_ubicacion, nombre'
-                ).execute()
-                ubicaciones_map = {
-                    u['id_ubicacion']: u['nombre'] 
-                    for u in (response_ubicaciones.data or [])
-                }
-            except Exception as e:
-                logging.warning(f"No se pudieron obtener ubicaciones: {e}")
-            
-            # Obtener detalles de productos varios
-            productos_varios_data = {}
-            if productos_varios:
-                codigos_varios = [p['codigo_interno'] for p in productos_varios]
-                response = self.client.table('ca_productos_varios').select(
-                    'codigo_interno, nombre, precio_venta, categoria, codigo_barras'
-                ).in_('codigo_interno', codigos_varios).execute()
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        p.id_producto,
+                        p.codigo_interno,
+                        p.nombre,
+                        p.descripcion,
+                        c.nombre as categoria,
+                        i.seccion,
+                        p.precio_venta as precio,
+                        p.precio_mayoreo,
+                        p.cantidad_mayoreo,
+                        i.stock_actual,
+                        i.stock_minimo,
+                        i.costo_promedio,
+                        u.nombre as ubicacion,
+                        p.requiere_refrigeracion,
+                        p.es_inventariable,
+                        p.activo
+                    FROM ca_productos p
+                    LEFT JOIN ca_categorias_producto c ON p.id_categoria = c.id_categoria
+                    LEFT JOIN inventario i ON p.id_producto = i.id_producto AND i.activo = TRUE
+                    LEFT JOIN ca_ubicaciones u ON i.id_ubicacion = u.id_ubicacion
+                    WHERE p.activo = TRUE
+                    ORDER BY p.nombre
+                """)
                 
-                productos_varios_data = {p['codigo_interno']: p for p in (response.data or [])}
-            
-            # Obtener detalles de suplementos
-            productos_suplementos_data = {}
-            if productos_suplementos:
-                codigos_suplementos = [p['codigo_interno'] for p in productos_suplementos]
-                response = self.client.table('ca_suplementos').select(
-                    'codigo_interno, nombre, precio_venta, tipo, codigo_barras'
-                ).in_('codigo_interno', codigos_suplementos).execute()
-                
-                productos_suplementos_data = {p['codigo_interno']: p for p in (response.data or [])}
-            
-            # Combinar datos
-            inventario_completo = []
-            
-            # Agregar productos varios
-            for inv in productos_varios:
-                codigo = inv['codigo_interno']
-                producto = productos_varios_data.get(codigo, {})
-                id_ubicacion = inv.get('id_ubicacion')
-                ubicacion_nombre = ubicaciones_map.get(id_ubicacion, 'N/A')
-                
-                inventario_completo.append({
-                    'id_inventario': inv['id_inventario'],
-                    'codigo_interno': codigo,
-                    'nombre': producto.get('nombre', 'N/A'),
-                    'precio': float(producto.get('precio_venta', 0.0)),
-                    'categoria': producto.get('categoria', 'General'),
-                    'codigo_barras': producto.get('codigo_barras'),
-                    'seccion': inv.get('seccion', 'N/A'),
-                    'tipo_producto': inv['tipo_producto'],
-                    'stock_actual': inv['stock_actual'],
-                    'stock_minimo': inv['stock_minimo'],
-                    'id_ubicacion': id_ubicacion,
-                    'ubicacion': ubicacion_nombre,
-                    'activo': inv['activo']
-                })
-            
-            # Agregar suplementos
-            for inv in productos_suplementos:
-                codigo = inv['codigo_interno']
-                producto = productos_suplementos_data.get(codigo, {})
-                id_ubicacion = inv.get('id_ubicacion')
-                ubicacion_nombre = ubicaciones_map.get(id_ubicacion, 'N/A')
-                
-                inventario_completo.append({
-                    'id_inventario': inv['id_inventario'],
-                    'codigo_interno': codigo,
-                    'nombre': producto.get('nombre', 'N/A'),
-                    'precio': float(producto.get('precio_venta', 0.0)),
-                    'categoria': producto.get('tipo', 'Suplemento'),  # Para suplementos usamos 'tipo' como categoría
-                    'codigo_barras': producto.get('codigo_barras'),
-                    'seccion': inv.get('seccion', 'N/A'),
-                    'tipo_producto': inv['tipo_producto'],
-                    'stock_actual': inv['stock_actual'],
-                    'stock_minimo': inv['stock_minimo'],
-                    'id_ubicacion': id_ubicacion,
-                    'ubicacion': ubicacion_nombre,
-                    'activo': inv['activo']
-                })
-            
-            logging.info(f"✅ Inventario completo cargado: {len(inventario_completo)} productos")
-            return inventario_completo
+                inventario = cursor.fetchall()
+                logging.info(f"Encontrados {len(inventario)} productos en inventario")
+                return inventario
             
         except Exception as e:
             logging.error(f"Error obteniendo inventario completo: {e}")
             return []
     
-    def actualizar_stock(self, codigo_interno: str, tipo_producto: str, nuevo_stock: int, 
-                        fecha_entrada: str = None, fecha_salida: str = None) -> bool:
-        """Actualizar stock en la tabla inventario
-        
-        Args:
-            codigo_interno: Código del producto
-            tipo_producto: 'varios' o 'suplemento'
-            nuevo_stock: Nuevo valor de stock
-            fecha_entrada: Timestamp de entrada (opcional)
-            fecha_salida: Timestamp de salida (opcional)
-        
-        Returns:
-            True si la actualización fue exitosa, False en caso contrario
-        """
+    def obtener_productos_por_categoria(self, categoria: str = None, excluir_categoria: str = None) -> List[Dict]:
+        """Obtener productos por categoría o excluyendo una categoría"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            update_data = {'stock_actual': nuevo_stock}
-            
-            if fecha_entrada:
-                update_data['fecha_ultima_entrada'] = fecha_entrada
-            
-            if fecha_salida:
-                update_data['fecha_ultima_salida'] = fecha_salida
-            
-            response = self.client.table('inventario').update(update_data).eq(
-                'codigo_interno', codigo_interno
-            ).eq('tipo_producto', tipo_producto).execute()
-            
-            logging.info(f"✅ Stock actualizado: {codigo_interno} → {nuevo_stock} unidades")
-            return True
+            with self.connection.cursor() as cursor:
+                if categoria:
+                    # Obtener productos de una categoría específica
+                    cursor.execute("""
+                        SELECT 
+                            p.id_producto, p.codigo_interno, p.nombre, p.descripcion,
+                            p.precio_venta, p.precio_mayoreo, p.cantidad_mayoreo, p.costo_promedio,
+                            c.nombre as categoria, p.codigo_barras, p.requiere_refrigeracion,
+                            p.es_inventariable, p.permite_venta_sin_stock, p.aplica_ieps,
+                            p.porcentaje_ieps, p.aplica_iva, p.porcentaje_iva, p.cantidad_medida,
+                            um.nombre as unidad_medida, p.activo
+                        FROM ca_productos p
+                        LEFT JOIN ca_categorias_producto c ON p.id_categoria = c.id_categoria
+                        LEFT JOIN ca_unidades_medida um ON p.id_unidad_medida = um.id_unidad_medida
+                        WHERE c.nombre = %s AND p.activo = TRUE
+                        ORDER BY p.nombre
+                    """, (categoria,))
+                elif excluir_categoria:
+                    # Obtener productos excluyendo una categoría
+                    cursor.execute("""
+                        SELECT 
+                            p.id_producto, p.codigo_interno, p.nombre, p.descripcion,
+                            p.precio_venta, p.precio_mayoreo, p.cantidad_mayoreo, p.costo_promedio,
+                            c.nombre as categoria, p.codigo_barras, p.requiere_refrigeracion,
+                            p.es_inventariable, p.permite_venta_sin_stock, p.aplica_ieps,
+                            p.porcentaje_ieps, p.aplica_iva, p.porcentaje_iva, p.cantidad_medida,
+                            um.nombre as unidad_medida, p.activo
+                        FROM ca_productos p
+                        LEFT JOIN ca_categorias_producto c ON p.id_categoria = c.id_categoria
+                        LEFT JOIN ca_unidades_medida um ON p.id_unidad_medida = um.id_unidad_medida
+                        WHERE (c.nombre IS NULL OR c.nombre != %s) AND p.activo = TRUE
+                        ORDER BY p.nombre
+                    """, (excluir_categoria,))
+                else:
+                    # Obtener todos los productos
+                    cursor.execute("""
+                        SELECT 
+                            p.id_producto, p.codigo_interno, p.nombre, p.descripcion,
+                            p.precio_venta, p.precio_mayoreo, p.cantidad_mayoreo, p.costo_promedio,
+                            c.nombre as categoria, p.codigo_barras, p.requiere_refrigeracion,
+                            p.es_inventariable, p.permite_venta_sin_stock, p.aplica_ieps,
+                            p.porcentaje_ieps, p.aplica_iva, p.porcentaje_iva, p.cantidad_medida,
+                            um.nombre as unidad_medida, p.activo
+                        FROM ca_productos p
+                        LEFT JOIN ca_categorias_producto c ON p.id_categoria = c.id_categoria
+                        LEFT JOIN ca_unidades_medida um ON p.id_unidad_medida = um.id_unidad_medida
+                        WHERE p.activo = TRUE
+                        ORDER BY p.nombre
+                    """)
+                
+                productos = cursor.fetchall()
+                logging.info(f"Encontrados {len(productos)} productos {'de categoría ' + categoria if categoria else 'excluyendo ' + excluir_categoria if excluir_categoria else 'totales'}")
+                return productos
             
         except Exception as e:
-            logging.error(f"Error actualizando stock: {e}")
-            return False
-    
-    def registrar_movimiento_inventario(self, movimiento_data: Dict) -> bool:
-        """Registrar un movimiento en la tabla movimientos_inventario
-        
-        Args:
-            movimiento_data: Dict con campos:
-                - codigo_interno (str)
-                - tipo_producto (str): 'varios' o 'suplemento'
-                - tipo_movimiento (str): 'entrada', 'salida', 'venta', 'merma', 'ajuste'
-                - cantidad (int): cantidad del movimiento (positivo para entrada, negativo para salida)
-                - stock_anterior (int)
-                - stock_nuevo (int)
-                - motivo (str, opcional)
-                - id_usuario (int, opcional)
-                - id_venta (int, opcional)
-        
-        Returns:
-            True si el registro fue exitoso, False en caso contrario
-        """
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            # Asegurar que tenemos los campos requeridos
-            movimiento_insert = {
-                'codigo_interno': movimiento_data.get('codigo_interno'),
-                'tipo_producto': movimiento_data.get('tipo_producto'),
-                'tipo_movimiento': movimiento_data.get('tipo_movimiento'),
-                'cantidad': int(movimiento_data.get('cantidad', 0)),
-                'stock_anterior': int(movimiento_data.get('stock_anterior', 0)),
-                'stock_nuevo': int(movimiento_data.get('stock_nuevo', 0))
-            }
-            
-            # Campos opcionales
-            if movimiento_data.get('motivo'):
-                movimiento_insert['motivo'] = movimiento_data['motivo']
-            
-            if movimiento_data.get('id_usuario'):
-                movimiento_insert['id_usuario'] = movimiento_data['id_usuario']
-            
-            if movimiento_data.get('id_venta'):
-                movimiento_insert['id_venta'] = movimiento_data['id_venta']
-            
-            response = self.client.table('movimientos_inventario').insert(movimiento_insert).execute()
-            
-            logging.info(f"✅ Movimiento registrado: {movimiento_data.get('tipo_movimiento')} de {movimiento_data.get('codigo_interno')}")
-            return True
-            
-        except Exception as e:
-            logging.error(f"Error registrando movimiento de inventario: {e}")
-            return False
-    
-    def obtener_movimientos_completos(self, limite: int = 1000) -> List[Dict]:
-        """Obtener movimientos de inventario con nombres de productos y usuarios
-        
-        Args:
-            limite: Número máximo de movimientos a retornar (default 1000)
-        
-        Returns:
-            Lista de diccionarios con movimientos completos incluyendo:
-            - nombre_producto (del JOIN con ca_productos_varios o ca_suplementos)
-            - nombre_usuario (del JOIN con usuarios si existe id_usuario)
-        """
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            # Obtener movimientos básicos, excluyendo los de tipo "venta"
-            response = self.client.table('movimientos_inventario').select(
-                'id_movimiento, fecha, tipo_movimiento, codigo_interno, tipo_producto, '
-                'cantidad, stock_anterior, stock_nuevo, motivo, id_usuario, id_venta'
-            ).neq('tipo_movimiento', 'venta').order('fecha', desc=True).limit(limite).execute()
-            
-            movimientos = response.data or []
-            movimientos_completos = []
-            
-            # Para cada movimiento, obtener el nombre del producto
-            for mov in movimientos:
-                codigo_interno = mov.get('codigo_interno')
-                tipo_producto = mov.get('tipo_producto', 'varios')
-                id_usuario = mov.get('id_usuario')
-                
-                nombre_producto = 'Producto desconocido'
-                nombre_usuario = 'Usuario desconocido'
-                
-                # Obtener nombre del producto según tipo
-                try:
-                    if tipo_producto == 'varios':
-                        response_prod = self.client.table('ca_productos_varios').select('nombre').eq(
-                            'codigo_interno', codigo_interno
-                        ).execute()
-                        if response_prod.data:
-                            nombre_producto = response_prod.data[0].get('nombre', 'Producto desconocido')
-                    else:
-                        response_prod = self.client.table('ca_suplementos').select('nombre').eq(
-                            'codigo_interno', codigo_interno
-                        ).execute()
-                        if response_prod.data:
-                            nombre_producto = response_prod.data[0].get('nombre', 'Producto desconocido')
-                except Exception as e:
-                    logging.warning(f"No se pudo obtener nombre del producto {codigo_interno}: {e}")
-                
-                # Obtener nombre del usuario
-                try:
-                    if id_usuario:
-                        response_user = self.client.table('usuarios').select('nombre_completo').eq(
-                            'id_usuario', id_usuario
-                        ).execute()
-                        if response_user.data:
-                            nombre_usuario = response_user.data[0].get('nombre_completo', 'Usuario desconocido')
-                except Exception as e:
-                    logging.warning(f"No se pudo obtener nombre del usuario {id_usuario}: {e}")
-                
-                # Agregar movimiento completo
-                movimientos_completos.append({
-                    'id_movimiento': mov.get('id_movimiento'),
-                    'fecha': mov.get('fecha'),
-                    'tipo_movimiento': mov.get('tipo_movimiento'),
-                    'codigo_interno': mov.get('codigo_interno'),
-                    'tipo_producto': mov.get('tipo_producto'),
-                    'cantidad': mov.get('cantidad'),
-                    'stock_anterior': mov.get('stock_anterior'),
-                    'stock_nuevo': mov.get('stock_nuevo'),
-                    'motivo': mov.get('motivo') or '',
-                    'id_usuario': mov.get('id_usuario'),
-                    'id_venta': mov.get('id_venta'),
-                    'nombre_producto': nombre_producto,
-                    'nombre_usuario': nombre_usuario
-                })
-            
-            logging.info(f"✅ Obtuvieron {len(movimientos_completos)} movimientos completos")
-            return movimientos_completos
-            
-        except Exception as e:
-            logging.error(f"Error obteniendo movimientos completos: {e}")
+            logging.error(f"Error obteniendo productos por categoría: {e}")
             return []
+    
+    def actualizar_producto(self, codigo_interno: str, cambios: Dict) -> bool:
+        """Actualizar un producto por código interno"""
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            # Construir la consulta de actualización dinámicamente
+            set_parts = []
+            values = []
+            for campo, valor in cambios.items():
+                set_parts.append(f"{campo} = %s")
+                values.append(valor)
+            
+            if not set_parts:
+                return True  # No hay cambios
+            
+            set_clause = ", ".join(set_parts)
+            values.append(codigo_interno)
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute(f"""
+                    UPDATE ca_productos 
+                    SET {set_clause}
+                    WHERE codigo_interno = %s
+                """, values)
+                
+                self.connection.commit()
+                logging.info(f"Producto {codigo_interno} actualizado correctamente")
+                return True
+            
+        except Exception as e:
+            logging.error(f"Error actualizando producto {codigo_interno}: {e}")
+            return False
+    
+    def get_product_by_barcode(self, barcode: str) -> Optional[Dict]:
+        """Buscar producto por código de barras"""
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        p.id_producto, p.codigo_interno, p.codigo_barras, p.nombre,
+                        p.descripcion, p.precio_venta, p.costo_promedio,
+                        COALESCE(SUM(i.stock_actual), 0) AS stock_actual,
+                        COALESCE(SUM(i.stock_disponible), 0) AS stock_disponible
+                    FROM ca_productos p
+                    LEFT JOIN inventario i ON p.id_producto = i.id_producto AND i.activo = TRUE
+                    WHERE p.codigo_barras = %s AND p.activo = TRUE
+                    GROUP BY p.id_producto
+                """, (barcode,))
+                
+                producto = cursor.fetchone()
+                
+                if producto:
+                    return producto
+                
+                logging.warning(f"Producto con código de barras {barcode} no encontrado")
+                return None
+        
+        except Exception as e:
+            logging.error(f"Error buscando producto por código de barras: {e}")
+            return None
+    
+    def get_product_by_code(self, code: str) -> Optional[Dict]:
+        """Buscar producto por código interno"""
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        p.id_producto, p.codigo_interno, p.codigo_barras, p.nombre,
+                        p.descripcion, p.precio_venta, p.costo_promedio,
+                        COALESCE(SUM(i.stock_actual), 0) AS stock_actual,
+                        COALESCE(SUM(i.stock_disponible), 0) AS stock_disponible
+                    FROM ca_productos p
+                    LEFT JOIN inventario i ON p.id_producto = i.id_producto AND i.activo = TRUE
+                    WHERE p.codigo_interno = %s AND p.activo = TRUE
+                    GROUP BY p.id_producto
+                """, (code,))
+                
+                producto = cursor.fetchone()
+                
+                if producto:
+                    return producto
+                
+                logging.warning(f"Producto con código interno {code} no encontrado")
+                return None
+        
+        except Exception as e:
+            logging.error(f"Error buscando producto por código interno: {e}")
+            return None
+    
+    def producto_existe(self, codigo_interno: str) -> bool:
+        """
+        Verificar si un código interno ya existe en productos.
+        
+        Args:
+            codigo_interno: Código interno del producto a verificar
+            
+        Returns:
+            True si el código ya existe, False si está disponible
+        """
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id_producto 
+                    FROM ca_productos 
+                    WHERE codigo_interno = %s 
+                    LIMIT 1
+                """, (codigo_interno,))
+                
+                return cursor.fetchone() is not None
+                
+        except Exception as e:
+            logging.error(f"Error verificando existencia de producto: {e}")
+            return False
+    
+    def insertar_producto(self, producto_data: Dict) -> Optional[int]:
+        """
+        Insertar un nuevo producto en la base de datos.
+        
+        Args:
+            producto_data: Diccionario con los datos del producto
+                {
+                    'codigo_interno': str,
+                    'codigo_barras': str (opcional),
+                    'nombre': str,
+                    'descripcion': str (opcional),
+                    'precio_venta': Decimal,
+                    'precio_mayoreo': Decimal (opcional),
+                    'cantidad_mayoreo': int (opcional),
+                    'id_categoria': int (opcional),
+                    'cantidad_medida': Decimal (opcional),
+                    'id_unidad_medida': int (opcional),
+                    'requiere_refrigeracion': bool,
+                    'es_inventariable': bool,
+                    'aplica_iva': bool,
+                    'activo': bool
+                }
+                
+        Returns:
+            ID del producto creado, o None si hay error
+        """
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO ca_productos (
+                        codigo_interno, codigo_barras, nombre, descripcion,
+                        precio_venta, precio_mayoreo, cantidad_mayoreo,
+                        id_categoria, cantidad_medida, id_unidad_medida,
+                        requiere_refrigeracion, es_inventariable, aplica_iva, activo
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    RETURNING id_producto
+                """, (
+                    producto_data['codigo_interno'],
+                    producto_data.get('codigo_barras'),
+                    producto_data['nombre'],
+                    producto_data.get('descripcion'),
+                    producto_data['precio_venta'],
+                    producto_data.get('precio_mayoreo'),
+                    producto_data.get('cantidad_mayoreo'),
+                    producto_data.get('id_categoria'),
+                    producto_data.get('cantidad_medida'),
+                    producto_data.get('id_unidad_medida'),
+                    producto_data.get('requiere_refrigeracion', False),
+                    producto_data.get('es_inventariable', True),
+                    producto_data.get('aplica_iva', True),
+                    producto_data.get('activo', True)
+                ))
+                
+                id_producto = cursor.fetchone()['id_producto']
+                self.connection.commit()
+                
+                logging.info(f"✅ Producto '{producto_data['nombre']}' insertado con ID: {id_producto}")
+                return id_producto
+                
+        except Exception as e:
+            try:
+                self.connection.rollback()
+            except:
+                pass
+            logging.error(f"Error insertando producto: {e}")
+            logging.error(traceback.format_exc())
+            return None
+    
+    def crear_inventario(self, inventario_data: Dict) -> Optional[int]:
+        """
+        Crear un registro de inventario para un producto.
+        
+        Args:
+            inventario_data: Diccionario con los datos del inventario
+                {
+                    'id_producto': int,
+                    'id_ubicacion': int,
+                    'stock_actual': int,
+                    'stock_minimo': int,
+                    'stock_maximo': int (opcional),
+                    'activo': bool
+                }
+                
+        Returns:
+            ID del inventario creado, o None si hay error
+        """
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO inventario (
+                        id_producto, id_ubicacion, stock_actual,
+                        stock_minimo, stock_maximo, activo
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s
+                    )
+                    RETURNING id_inventario
+                """, (
+                    inventario_data['id_producto'],
+                    inventario_data.get('id_ubicacion', 1),
+                    inventario_data.get('stock_actual', 0),
+                    inventario_data.get('stock_minimo', 5),
+                    inventario_data.get('stock_maximo'),
+                    inventario_data.get('activo', True)
+                ))
+                
+                id_inventario = cursor.fetchone()['id_inventario']
+                self.connection.commit()
+                
+                logging.info(f"Inventario creado con ID: {id_inventario}")
+                return id_inventario
+                
+        except Exception as e:
+            try:
+                self.connection.rollback()
+            except:
+                pass
+            logging.error(f"Error creando inventario: {e}")
+            return None
     
     # ========== UBICACIONES ==========
     
     def get_ubicaciones(self) -> List[Dict]:
         """Obtener todas las ubicaciones activas"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            response = self.client.table('ca_ubicaciones').select('*').eq('activa', True).order('nombre').execute()
-            return response.data or []
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id_ubicacion, nombre, descripcion, activa
+                    FROM ca_ubicaciones
+                    WHERE activa = TRUE
+                    ORDER BY nombre
+                """)
+                return cursor.fetchall()
         except Exception as e:
             logging.error(f"Error obteniendo ubicaciones: {e}")
             return []
@@ -1196,445 +864,297 @@ class PostgresManager:
     def get_ubicacion_by_id(self, id_ubicacion: int) -> Optional[Dict]:
         """Obtener una ubicación por ID"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            response = self.client.table('ca_ubicaciones').select('*').eq('id_ubicacion', id_ubicacion).execute()
-            return response.data[0] if response.data else None
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id_ubicacion, nombre, descripcion, activa
+                    FROM ca_ubicaciones
+                    WHERE id_ubicacion = %s
+                """, (id_ubicacion,))
+                return cursor.fetchone()
         except Exception as e:
             logging.error(f"Error obteniendo ubicación: {e}")
             return None
     
-    # ========== PRODUCTOS DIGITALES ==========
+    # ========== VENTAS ==========
     
-    def get_productos_digitales(self) -> List[Dict]:
-        """Obtener todos los productos digitales activos"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('ca_productos_digitales').select('*').eq('activo', True).order('nombre').execute()
-            return response.data or []
-        except Exception as e:
-            logging.error(f"Error obteniendo productos digitales: {e}")
-            return []
-    
-    def get_producto_digital_by_id(self, id_producto_digital: int) -> Optional[Dict]:
-        """Obtener producto digital por ID"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('ca_productos_digitales').select('*').eq('id_producto_digital', id_producto_digital).execute()
-            return response.data[0] if response.data else None
-        except Exception as e:
-            logging.error(f"Error obteniendo producto digital: {e}")
-            return None
-    
-    def get_producto_digital_by_name(self, nombre: str) -> Optional[Dict]:
-        """Obtener producto digital por nombre"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('ca_productos_digitales').select('*').eq('nombre', nombre).eq('activo', True).execute()
-            
-            if response.data:
-                return response.data[0]
-            return None
-        except Exception as e:
-            logging.error(f"Error obteniendo producto digital por nombre: {e}")
-            return None
-    
-    def insertar_producto_digital(self, producto_data: Dict) -> Optional[int]:
-        """Insertar un nuevo producto digital"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            producto_insert = {
-                'codigo_interno': producto_data['codigo_interno'],
-                'nombre': producto_data['nombre'],
-                'descripcion': producto_data.get('descripcion'),
-                'tipo': producto_data['tipo'],
-                'precio_venta': float(producto_data.get('precio_venta', 0)),
-                'duracion_dias': int(producto_data.get('duracion_dias', 0)) if producto_data.get('duracion_dias') else None,
-                'aplica_domingo': bool(producto_data.get('aplica_domingo', False)),
-                'aplica_festivo': bool(producto_data.get('aplica_festivo', False)),
-                'es_unico': bool(producto_data.get('es_unico', False)),
-                'requiere_asignacion': bool(producto_data.get('requiere_asignacion', False)),
-                'activo': True
+    def create_sale(self, venta_data: Dict) -> Optional[int]:
+        """
+        Crear nueva venta con transacción.
+        
+        Args:
+            venta_data: {
+                'id_vendedor': int,
+                'id_cliente': int (opcional),
+                'id_turno': int (opcional),
+                'productos': [{'id_producto': int, 'cantidad': int, 'precio': Decimal}],
+                'subtotal': Decimal,
+                'descuento': Decimal,
+                'impuestos': Decimal,
+                'total': Decimal,
+                'metodo_pago': str,
+                'tipo_venta': str
             }
+        
+        Returns:
+            ID de la venta creada, o None si hay error
+        """
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
             
-            response = self.client.table('ca_productos_digitales').insert(producto_insert).execute()
-            
-            if response.data:
-                id_producto = response.data[0]['id_producto_digital']
-                logging.info(f"✅ Producto digital '{producto_data['nombre']}' creado con ID: {id_producto}")
-                return id_producto
-            else:
-                logging.error(f"No se pudo crear el producto digital '{producto_data['nombre']}'")
-                return None
+            with self.connection.cursor() as cursor:
+                # Generar número de ticket único
+                cursor.execute("""
+                    SELECT 'TKT-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || 
+                           LPAD(CAST(COALESCE(MAX(CAST(SUBSTRING(numero_ticket FROM 16) AS INTEGER)), 0) + 1 AS text), 6, '0') AS numero
+                    FROM ventas
+                    WHERE DATE(fecha) = CURRENT_DATE
+                """)
+                result = cursor.fetchone()
+                numero_ticket = result['numero'] if result and result['numero'] else f"TKT-{datetime.now().strftime('%Y%m%d')}-000001"
+                
+                # Aceptar tanto id_vendedor como id_usuario (flexibilidad)
+                id_vendedor = venta_data.get('id_vendedor') or venta_data.get('id_usuario')
+                if not id_vendedor:
+                    raise ValueError("Se requiere id_vendedor o id_usuario en venta_data")
+                
+                # Aceptar id_cliente, si no viene usar cliente genérico (id=2: Cliente Mostrador)
+                id_cliente = venta_data.get('id_cliente', 2)
+                
+                # Insertar venta
+                cursor.execute("""
+                    INSERT INTO ventas (
+                        numero_ticket, id_vendedor, id_cliente, id_turno,
+                        subtotal, descuento_general, iva, total,
+                        metodo_pago, tipo_venta, estado, es_credito, pagado
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s::tipo_metodo_pago, %s::tipo_venta, 'completada', FALSE, TRUE
+                    )
+                    RETURNING id_venta
+                """, (
+                    numero_ticket,
+                    id_vendedor,
+                    id_cliente,
+                    venta_data.get('id_turno'),
+                    venta_data.get('subtotal', 0),
+                    venta_data.get('descuento', 0),
+                    venta_data.get('iva', venta_data.get('impuestos', 0)),
+                    venta_data['total'],
+                    venta_data.get('metodo_pago', 'efectivo'),
+                    venta_data.get('tipo_venta', 'producto')
+                ))
+                
+                venta_id = cursor.fetchone()['id_venta']
+                
+                # Insertar detalles y actualizar stock
+                for item in venta_data.get('productos', []):
+                    # Obtener información del producto
+                    cursor.execute("""
+                        SELECT codigo_interno, nombre, descripcion, precio_venta, costo_promedio
+                        FROM ca_productos
+                        WHERE id_producto = %s
+                    """, (item['id_producto'],))
+                    
+                    producto = cursor.fetchone()
+                    if not producto:
+                        logging.error(f"Producto {item['id_producto']} no encontrado")
+                        raise ValueError(f"Producto {item['id_producto']} no encontrado")
+                    
+                    precio_unitario = Decimal(str(item.get('precio', producto['precio_venta'])))
+                    costo = Decimal(str(producto['costo_promedio'] or 0))
+                    subtotal_linea = precio_unitario * item['cantidad']
+                    utilidad = (precio_unitario - costo) * item['cantidad']
+                    
+                    # Insertar detalle de venta
+                    cursor.execute("""
+                        INSERT INTO detalles_venta (
+                            id_venta, id_producto, tipo_producto, codigo_interno,
+                            cantidad, precio_unitario, subtotal_linea, total_linea,
+                            nombre_producto, descripcion_producto, utilidad_linea
+                        ) VALUES (
+                            %s, %s, 'varios', %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                    """, (
+                        venta_id,
+                        item['id_producto'],
+                        producto['codigo_interno'],
+                        item['cantidad'],
+                        precio_unitario,
+                        subtotal_linea,
+                        subtotal_linea,  # total_linea = subtotal_linea (sin impuestos por ahora)
+                        producto['nombre'],
+                        producto.get('descripcion'),
+                        utilidad
+                    ))
+                    
+                    # Actualizar stock (primer ubicación disponible con stock)
+                    cursor.execute("""
+                        SELECT id_inventario, id_ubicacion, stock_actual, costo_promedio
+                        FROM inventario
+                        WHERE id_producto = %s AND activo = TRUE AND stock_disponible >= %s
+                        ORDER BY stock_actual DESC
+                        LIMIT 1
+                    """, (item['id_producto'], item['cantidad']))
+                    
+                    inv = cursor.fetchone()
+                    if not inv:
+                        logging.warning(f"Stock insuficiente para producto {producto['nombre']}")
+                        # Continuar pero registrar el problema
+                        continue
+                    
+                    nuevo_stock = inv['stock_actual'] - item['cantidad']
+                    
+                    # Actualizar inventario
+                    cursor.execute("""
+                        UPDATE inventario
+                        SET stock_actual = %s,
+                            fecha_ultima_salida = CURRENT_TIMESTAMP
+                        WHERE id_inventario = %s
+                    """, (nuevo_stock, inv['id_inventario']))
+                    
+                    # Registrar movimiento de inventario
+                    cursor.execute("""
+                        INSERT INTO movimientos_inventario (
+                            id_producto, id_ubicacion, tipo_movimiento,
+                            cantidad, stock_anterior, stock_nuevo,
+                            costo_unitario, costo_promedio_anterior, costo_promedio_nuevo,
+                            id_usuario, id_venta, motivo
+                        ) VALUES (
+                            %s, %s, 'venta', %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                    """, (
+                        item['id_producto'],
+                        inv['id_ubicacion'],
+                        -item['cantidad'],
+                        inv['stock_actual'],
+                        nuevo_stock,
+                        inv['costo_promedio'],
+                        inv['costo_promedio'],
+                        inv['costo_promedio'],
+                        id_vendedor,
+                        venta_id,
+                        f"Venta {numero_ticket}"
+                    ))
+                
+                self.connection.commit()
+                logging.info(f"✅ Venta creada: {numero_ticket}, Total: ${venta_data['total']:.2f}")
+                return venta_id
+                
         except Exception as e:
-            logging.error(f"Error insertando producto digital: {e}")
+            try:
+                self.connection.rollback()
+            except:
+                pass
+            logging.error(f"Error creando venta: {e}")
+            logging.error(traceback.format_exc())
             return None
     
-    # ========== LOCKERS ==========
+    # ========== CLIENTES ==========
     
-    def get_lockers(self) -> List[Dict]:
-        """Obtener todos los lockers activos"""
+    def get_cliente_by_codigo(self, codigo: str) -> Optional[Dict]:
+        """Obtener cliente por código"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            response = self.client.table('lockers').select('*').eq('activo', True).order('numero').execute()
-            return response.data or []
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id_cliente, codigo, nombre_completo, telefono, email, activo
+                    FROM clientes
+                    WHERE codigo = %s AND activo = TRUE
+                """, (codigo,))
+                
+                return cursor.fetchone()
+                
         except Exception as e:
-            logging.error(f"Error obteniendo lockers: {e}")
-            return []
-    
-    def get_locker_by_id(self, id_locker: int) -> Optional[Dict]:
-        """Obtener locker por ID"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('lockers').select('*').eq('id_locker', id_locker).execute()
-            return response.data[0] if response.data else None
-        except Exception as e:
-            logging.error(f"Error obteniendo locker: {e}")
+            logging.error(f"Error obteniendo cliente: {e}")
             return None
     
-    def insertar_locker(self, locker_data: Dict) -> Optional[int]:
-        """Insertar un nuevo locker"""
+    def get_total_members(self) -> int:
+        """Obtener total de clientes activos"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            locker_insert = {
-                'numero': locker_data['numero'],
-                'ubicacion': locker_data.get('ubicacion', 'Zona Lockers'),
-                'tipo': locker_data.get('tipo', 'estándar'),
-                'requiere_llave': bool(locker_data.get('requiere_llave', True)),
-                'activo': True
-            }
-            
-            response = self.client.table('lockers').insert(locker_insert).execute()
-            
-            if response.data:
-                id_locker = response.data[0]['id_locker']
-                logging.info(f"✅ Locker '{locker_data['numero']}' creado con ID: {id_locker}")
-                return id_locker
-            else:
-                logging.error(f"No se pudo crear el locker '{locker_data['numero']}'")
-                return None
+            with self.connection.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM clientes WHERE activo = TRUE")
+                result = cursor.fetchone()
+                return result['count'] if result else 0
         except Exception as e:
-            logging.error(f"Error insertando locker: {e}")
-            return None
-    
-    # ========== ASIGNACIONES ACTIVAS ==========
-    
-    def crear_asignacion_activa(self, asignacion_data: Dict) -> Optional[int]:
-        """Crear una asignación activa (membresía o locker)"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            asignacion_insert = {
-                'id_miembro': asignacion_data['id_miembro'],
-                'id_producto_digital': asignacion_data['id_producto_digital'],
-                'id_venta': asignacion_data.get('id_venta'),
-                'id_locker': asignacion_data.get('id_locker'),
-                'activa': True,
-                'cancelada': False,
-                'fecha_inicio': asignacion_data['fecha_inicio'],
-                'fecha_fin': asignacion_data['fecha_fin'],
-                'estado': asignacion_data.get('estado', 'activa')
-            }
-            
-            response = self.client.table('asignaciones_activas').insert(asignacion_insert).execute()
-            
-            if response.data:
-                id_asignacion = response.data[0]['id_asignacion']
-                logging.info(f"✅ Asignación activa creada con ID: {id_asignacion}")
-                return id_asignacion
-            else:
-                logging.error("No se pudo crear la asignación activa")
-                return None
-        except Exception as e:
-            logging.error(f"Error creando asignación activa: {e}")
-            return None
-    
-    def get_asignaciones_activas_por_miembro(self, id_miembro: int) -> List[Dict]:
-        """Obtener asignaciones activas de un miembro"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('asignaciones_activas').select('*').eq('id_miembro', id_miembro).eq('activa', True).order('fecha_inicio', desc=True).execute()
-            return response.data or []
-        except Exception as e:
-            logging.error(f"Error obteniendo asignaciones activas: {e}")
-            return []
-    
-    def cancelar_asignacion(self, id_asignacion: int) -> bool:
-        """Cancelar una asignación activa"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('asignaciones_activas').update({
-                'activa': False,
-                'cancelada': True,
-                'estado': 'cancelada',
-                'fecha_cancelacion': datetime.now().isoformat()
-            }).eq('id_asignacion', id_asignacion).execute()
-            
-            if response.data:
-                logging.info(f"✅ Asignación {id_asignacion} cancelada")
-                return True
-            else:
-                logging.error(f"No se pudo cancelar la asignación {id_asignacion}")
-                return False
-        except Exception as e:
-            logging.error(f"Error cancelando asignación: {e}")
-            return False
-    
-    # ========== REGISTRO DE ENTRADAS ==========
-    
-    def registrar_entrada(self, entrada_data: Dict) -> Optional[int]:
-        """Registrar una entrada al gimnasio"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            entrada_insert = {
-                'id_miembro': entrada_data.get('id_miembro'),
-                'id_personal': entrada_data.get('id_personal'),
-                'nombre_visitante': entrada_data.get('nombre_visitante'),
-                'tipo_acceso': entrada_data['tipo_acceso'],
-                'area_accedida': entrada_data.get('area_accedida', 'General'),
-                'dispositivo_registro': entrada_data.get('dispositivo_registro'),
-                'notas': entrada_data.get('notas'),
-                'autorizado_por': entrada_data.get('autorizado_por'),
-                'id_venta_acceso': entrada_data.get('id_venta_acceso'),
-                'fecha_entrada': datetime.now().isoformat()
-            }
-            
-            response = self.client.table('registro_entradas').insert(entrada_insert).execute()
-            
-            if response.data:
-                id_entrada = response.data[0]['id_entrada']
-                logging.info(f"✅ Entrada registrada con ID: {id_entrada}")
-                return id_entrada
-            else:
-                logging.error("No se pudo registrar la entrada")
-                return None
-        except Exception as e:
-            logging.error(f"Error registrando entrada: {e}")
-            return None
-    
-    def registrar_salida(self, id_entrada: int) -> bool:
-        """Registrar la salida de una persona"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('registro_entradas').update({'fecha_salida': datetime.now().isoformat()}).eq('id_entrada', id_entrada).execute()
-            
-            if response.data:
-                logging.info(f"✅ Salida registrada para entrada {id_entrada}")
-                return True
-            else:
-                logging.error(f"No se pudo registrar la salida para entrada {id_entrada}")
-                return False
-        except Exception as e:
-            logging.error(f"Error registrando salida: {e}")
-            return False
-    
-    def get_historial_entradas(self, id_miembro: int, limite: int = 50) -> List[Dict]:
-        """Obtener historial de entradas de un miembro"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('registro_entradas').select('*').eq('id_miembro', id_miembro).order('fecha_entrada', desc=True).limit(limite).execute()
-            return response.data or []
-        except Exception as e:
-            logging.error(f"Error obteniendo historial de entradas: {e}")
-            return []
-    
-    # ========== VENTAS DIGITALES (APP) ==========
-    
-    def crear_venta_digital(self, venta_data: Dict) -> Optional[int]:
-        """Crear una venta digital desde la app"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            venta_insert = {
-                'id_miembro': venta_data['id_miembro'],
-                'id_producto_digital': venta_data['id_producto_digital'],
-                'id_locker': venta_data.get('id_locker'),
-                'id_usuario': venta_data.get('id_usuario'),
-                'fecha_compra': datetime.now().isoformat(),
-                'monto': float(venta_data['monto']),
-                'metodo_pago': venta_data.get('metodo_pago', 'efectivo'),
-                'referencia_pago': venta_data.get('referencia_pago'),
-                'estado': venta_data.get('estado', 'pendiente_pago'),
-                'fecha_inicio': venta_data['fecha_inicio'],
-                'fecha_fin': venta_data['fecha_fin']
-            }
-            
-            response = self.client.table('ventas_digitales').insert(venta_insert).execute()
-            
-            if response.data:
-                id_venta = response.data[0]['id_venta_digital']
-                logging.info(f"✅ Venta digital creada con ID: {id_venta}")
-                return id_venta
-            else:
-                logging.error("No se pudo crear la venta digital")
-                return None
-        except Exception as e:
-            logging.error(f"Error creando venta digital: {e}")
-            return None
-    
-    def get_ventas_digitales_por_miembro(self, id_miembro: int) -> List[Dict]:
-        """Obtener ventas digitales de un miembro"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('ventas_digitales').select('*').eq('id_miembro', id_miembro).order('fecha_compra', desc=True).execute()
-            return response.data or []
-        except Exception as e:
-            logging.error(f"Error obteniendo ventas digitales: {e}")
-            return []
-    
-    def actualizar_estado_venta_digital(self, id_venta_digital: int, nuevo_estado: str) -> bool:
-        """Actualizar el estado de una venta digital"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('ventas_digitales').update({'estado': nuevo_estado}).eq('id_venta_digital', id_venta_digital).execute()
-            
-            if response.data:
-                logging.info(f"✅ Venta digital {id_venta_digital} actualizada a estado: {nuevo_estado}")
-                return True
-            else:
-                logging.error(f"No se pudo actualizar venta digital {id_venta_digital}")
-                return False
-        except Exception as e:
-            logging.error(f"Error actualizando venta digital: {e}")
-            return False
-    
-    # ========== NOTIFICACIONES DE PAGO ==========
-    
-    def crear_notificacion_pago(self, notif_data: Dict) -> Optional[int]:
-        """Crear una notificación de pago"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            notif_insert = {
-                'id_miembro': notif_data['id_miembro'],
-                'id_venta_digital': notif_data.get('id_venta_digital'),
-                'tipo_notificacion': notif_data['tipo_notificacion'],
-                'asunto': notif_data['asunto'],
-                'descripcion': notif_data.get('descripcion'),
-                'monto_pendiente': float(notif_data.get('monto_pendiente', 0)) if notif_data.get('monto_pendiente') else None,
-                'fecha_vencimiento': notif_data.get('fecha_vencimiento'),
-                'para_miembro': bool(notif_data.get('para_miembro', True)),
-                'para_recepcion': bool(notif_data.get('para_recepcion', True)),
-                'codigo_pago_generado': notif_data.get('codigo_pago_generado'),
-                'leida': False,
-                'respondida': False
-            }
-            
-            response = self.client.table('notificaciones_pos').insert(notif_insert).execute()
-            
-            if response.data:
-                id_notif = response.data[0]['id_notificacion']
-                logging.info(f"✅ Notificación de pago creada con ID: {id_notif}")
-                return id_notif
-            else:
-                logging.error("No se pudo crear la notificación de pago")
-                return None
-        except Exception as e:
-            logging.error(f"Error creando notificación de pago: {e}")
-            return None
-    
-    def get_notificaciones_pendientes(self, para_recepcion: bool = True) -> List[Dict]:
-        """Obtener notificaciones de pago pendientes"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            query = self.client.table('notificaciones_pos').select('*').eq('leida', False).eq('respondida', False)
-            
-            if para_recepcion:
-                query = query.eq('para_recepcion', True)
-            
-            response = query.order('creada_en', desc=True).execute()
-            return response.data or []
-        except Exception as e:
-            logging.error(f"Error obteniendo notificaciones pendientes: {e}")
-            return []
-    
-    def marcar_notificacion_como_leida(self, id_notificacion: int) -> bool:
-        """Marcar una notificación como leída"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('notificaciones_pos').update({'leida': True}).eq('id_notificacion', id_notificacion).execute()
-            
-            if response.data:
-                logging.info(f"✅ Notificación {id_notificacion} marcada como leída")
-                return True
-            else:
-                logging.error(f"No se pudo marcar la notificación {id_notificacion} como leída")
-                return False
-        except Exception as e:
-            logging.error(f"Error marcando notificación como leída: {e}")
-            return False
+            logging.error(f"Error obteniendo total de clientes: {e}")
+            return 0
     
     # ========== TURNOS DE CAJA ==========
     
     def abrir_turno_caja(self, id_usuario: int, monto_inicial: Decimal = 0) -> Optional[int]:
         """Abrir un nuevo turno de caja"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            turno_insert = {
-                'id_usuario': id_usuario,
-                'monto_inicial': float(monto_inicial),
-                'cerrado': False
-            }
+            from psycopg2.extras import RealDictCursor
             
-            response = self.client.table('turnos_caja').insert(turno_insert).execute()
-            
-            if response.data:
-                id_turno = response.data[0]['id_turno']
-                logging.info(f"✅ Turno de caja abierto con ID: {id_turno} para usuario {id_usuario}")
-                return id_turno
-            else:
-                logging.error(f"No se pudo abrir turno de caja para usuario {id_usuario}")
-                return None
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Generar número de turno
+                cursor.execute("""
+                    SELECT 'TURNO-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || 
+                           LPAD(CAST(COALESCE(MAX(CAST(SUBSTRING(numero_turno FROM 18) AS INTEGER)), 0) + 1 AS TEXT), 4, '0') AS numero_turno
+                    FROM turnos_caja
+                    WHERE DATE(fecha_apertura) = CURRENT_DATE
+                """)
+                result = cursor.fetchone()
+                numero_turno = result['numero_turno'] if result else f"TURNO-{datetime.now().strftime('%Y%m%d')}-0001"
+                
+                cursor.execute("""
+                    INSERT INTO turnos_caja (
+                        numero_turno, id_usuario, monto_inicial, cerrado
+                    ) VALUES (
+                        %s, %s, %s, FALSE
+                    )
+                    RETURNING id_turno
+                """, (numero_turno, id_usuario, monto_inicial))
+                
+                result = cursor.fetchone()
+                id_turno = result['id_turno'] if result else None
+                
+                if id_turno:
+                    self.connection.commit()
+                    logging.info(f"✅ Turno de caja abierto: {numero_turno} (ID: {id_turno})")
+                    return id_turno
+                else:
+                    self.connection.rollback()
+                    return None
         except Exception as e:
-            logging.error(f"Error abriendo turno de caja: {e}")
+            try:
+                self.connection.rollback()
+            except:
+                pass
+            logging.error(f"Error abriendo turno de caja: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
             return None
     
     def get_turno_activo(self, id_usuario: int) -> Optional[Dict]:
         """Obtener el turno activo de un usuario"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            response = self.client.table('turnos_caja').select('*').eq('id_usuario', id_usuario).eq('cerrado', False).order('fecha_apertura', desc=True).limit(1).execute()
-            return response.data[0] if response.data else None
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        id_turno, numero_turno, id_usuario, fecha_apertura, 
+                        monto_inicial, total_efectivo, total_ventas, cerrado
+                    FROM turnos_caja
+                    WHERE id_usuario = %s AND cerrado = FALSE
+                    ORDER BY fecha_apertura DESC
+                    LIMIT 1
+                """, (id_usuario,))
+                return cursor.fetchone()
         except Exception as e:
             logging.error(f"Error obteniendo turno activo: {e}")
             return None
@@ -1642,263 +1162,83 @@ class PostgresManager:
     def cerrar_turno_caja(self, id_turno: int, monto_real_cierre: Decimal) -> bool:
         """Cerrar un turno de caja"""
         try:
-            if not self.is_connected:
+            if not self.connection or self.connection.closed:
                 self.connect()
             
-            # Obtener datos del turno
-            response = self.client.table('turnos_caja').select('*').eq('id_turno', id_turno).eq('cerrado', False).execute()
-            
-            if not response.data:
-                logging.warning(f"Turno {id_turno} no encontrado o ya cerrado")
-                return False
-            
-            turno = response.data[0]
-            diferencia = monto_real_cierre - (turno.get('monto_esperado') or 0)
-            
-            update_data = {
-                'fecha_cierre': datetime.now().isoformat(),
-                'monto_real_cierre': float(monto_real_cierre),
-                'diferencia': float(diferencia),
-                'cerrado': True,
-                'actualizado_en': datetime.now().isoformat()
-            }
-            
-            update_response = self.client.table('turnos_caja').update(update_data).eq('id_turno', id_turno).execute()
-            
-            if update_response.data:
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Obtener datos del turno
+                cursor.execute("""
+                    SELECT monto_inicial, total_efectivo
+                    FROM turnos_caja
+                    WHERE id_turno = %s AND cerrado = FALSE
+                """, (id_turno,))
+                
+                turno = cursor.fetchone()
+                if not turno:
+                    logging.warning(f"Turno {id_turno} no encontrado o ya cerrado")
+                    return False
+                
+                # Asegurar que todos los valores sean Decimal para evitar errores de tipo
+                monto_inicial = Decimal(str(turno['monto_inicial'] or 0))
+                total_efectivo = Decimal(str(turno['total_efectivo'] or 0))
+                monto_real_cierre = Decimal(str(monto_real_cierre or 0))
+                
+                monto_esperado = monto_inicial + total_efectivo
+                diferencia = monto_real_cierre - monto_esperado
+                
+                cursor.execute("""
+                    UPDATE turnos_caja
+                    SET 
+                        fecha_cierre = CURRENT_TIMESTAMP,
+                        monto_esperado_efectivo = %s,
+                        monto_real_efectivo = %s,
+                        diferencia_efectivo = %s,
+                        cerrado = TRUE
+                    WHERE id_turno = %s
+                """, (monto_esperado, monto_real_cierre, diferencia, id_turno))
+                
+                self.connection.commit()
                 logging.info(f"✅ Turno {id_turno} cerrado. Diferencia: ${diferencia:.2f}")
                 return True
-            else:
-                logging.error(f"No se pudo cerrar el turno {id_turno}")
-                return False
         except Exception as e:
+            try:
+                self.connection.rollback()
+            except:
+                pass
             logging.error(f"Error cerrando turno de caja: {e}")
-            return False
-    
-    # ========== MÉTODOS PARA PAGOS EN EFECTIVO ==========
-    
-    def buscar_notificacion_por_codigo_pago(self, codigo_pago: str) -> Optional[Dict]:
-        """Buscar una notificación de pago pendiente por código generado"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('notificaciones_pos').select('*, miembros(*)').eq('codigo_pago_generado', codigo_pago).eq('respondida', False).execute()
-            return response.data[0] if response.data else None
-        except Exception as e:
-            logging.error(f"Error buscando notificación por código: {e}")
-            return None
-    
-    def obtener_detalle_notificacion(self, id_notificacion: int) -> Optional[Dict]:
-        """Obtener detalles completos de una notificación de pago"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('notificaciones_pos').select('*, miembros(*), ventas_digitales(*, ca_productos_digitales(*))').eq('id_notificacion', id_notificacion).execute()
-            return response.data[0] if response.data else None
-        except Exception as e:
-            logging.error(f"Error obteniendo detalles de notificación: {e}")
-            return None
-    
-    def obtener_notificaciones_pendientes(self) -> List[Dict]:
-        """Obtener todas las notificaciones de pago pendientes para recepción"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            response = self.client.table('notificaciones_pos').select('*, miembros(*)').eq('para_recepcion', True).eq('respondida', False).in_('tipo_notificacion', ['membresia_pendiente', 'visita_pendiente', 'pago_pendiente']).order('creada_en', desc=True).execute()
-            return response.data or []
-        except Exception as e:
-            logging.error(f"Error obteniendo notificaciones pendientes: {e}")
-            return []
-    
-    def sincronizar_notificacion_supabase(self, id_notificacion: int, datos_supabase: Dict) -> bool:
-        """Sincronizar una notificación que viene de Supabase"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            logging.info(f"✅ Notificación {id_notificacion} sincronizada desde Supabase (ya está en la base de datos)")
-            return True
-                
-        except Exception as e:
-            logging.error(f"Error sincronizando notificación: {e}")
-            return False
-    
-    def confirmar_pago_efectivo(self, id_notificacion: int, observaciones: str = None) -> bool:
-        """Confirmar pago en efectivo y activar asignación correspondiente"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            # Obtener datos de la venta digital
-            notif_response = self.client.table('notificaciones_pos').select('*, ventas_digitales(*)').eq('id_notificacion', id_notificacion).execute()
-            
-            if not notif_response.data:
-                logging.error(f"Notificación {id_notificacion} no encontrada")
-                return False
-            
-            notif = notif_response.data[0]
-            id_venta_digital = notif.get('id_venta_digital')
-            
-            if not id_venta_digital:
-                logging.error(f"Venta digital no encontrada para notificación {id_notificacion}")
-                return False
-            
-            venta_response = self.client.table('ventas_digitales').select('*').eq('id_venta_digital', id_venta_digital).execute()
-            
-            if not venta_response.data:
-                logging.error(f"Venta digital {id_venta_digital} no encontrada")
-                return False
-            
-            venta = venta_response.data[0]
-            timestamp_actual = datetime.now().isoformat()
-            referencia_pago = f"EFECTIVO_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            
-            # Actualizar venta_digital a 'activa'
-            self.client.table('ventas_digitales').update({
-                'estado': 'activa',
-                'fecha_compra': timestamp_actual,
-                'referencia_pago': referencia_pago
-            }).eq('id_venta_digital', id_venta_digital).execute()
-            
-            # Actualizar notificación como resuelta
-            self.client.table('notificaciones_pos').update({
-                'leida': True,
-                'respondida': True,
-                'resuelve_en': timestamp_actual
-            }).eq('id_notificacion', id_notificacion).execute()
-            
-            # Crear asignación activa
-            self.client.table('asignaciones_activas').insert({
-                'id_miembro': venta['id_miembro'],
-                'id_producto_digital': venta['id_producto_digital'],
-                'id_venta': None,
-                'id_locker': venta.get('id_locker'),
-                'activa': True,
-                'cancelada': False,
-                'fecha_inicio': venta['fecha_inicio'],
-                'fecha_fin': venta['fecha_fin']
-            }).execute()
-            
-            # Registrar entrada
-            obs_completa = f"Pago efectivo confirmado. Ref: {referencia_pago}. {observaciones or ''}"
-            self.client.table('registro_entradas').insert({
-                'id_miembro': venta['id_miembro'],
-                'tipo_acceso': 'miembro',
-                'fecha_entrada': timestamp_actual,
-                'area_accedida': 'Recepción',
-                'dispositivo_registro': 'POS',
-                'notas': obs_completa
-            }).execute()
-            
-            # Crear notificación de confirmación
-            self.client.table('notificaciones_pos').insert({
-                'id_miembro': venta['id_miembro'],
-                'id_venta_digital': id_venta_digital,
-                'tipo_notificacion': 'pago_completado',
-                'asunto': 'Pago Confirmado',
-                'descripcion': 'Tu pago en efectivo ha sido confirmado. Tu membresía/visita está activa.',
-                'leida': False,
-                'respondida': True,
-                'para_miembro': True,
-                'para_recepcion': False
-            }).execute()
-            
-            logging.info(f"✅ Pago efectivo confirmado: {referencia_pago}")
-            return True
-                
-        except Exception as e:
-            logging.error(f"Error confirmando pago: {e}")
-            return False
-
-    def registrar_recargo_cobrado(self, recargo_data: Dict) -> Optional[int]:
-        """Registrar un recargo cobrado en la tabla recargos_cobrados"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            recargo_insert = {
-                'id_miembro': recargo_data['id_miembro'],
-                'id_producto_digital': recargo_data['id_producto_digital'],
-                'id_venta': recargo_data.get('id_venta'),
-                'id_detalle_venta': recargo_data.get('id_detalle_venta'),
-                'fecha_aplica': recargo_data['fecha_aplica'],
-                'id_locker': recargo_data.get('id_locker'),
-                'monto': float(recargo_data['monto']),
-                'procesado': recargo_data.get('procesado', True),
-                'pagado': recargo_data.get('pagado', False)
-            }
-            
-            response = self.client.table('recargos_cobrados').insert(recargo_insert).execute()
-            
-            if response.data:
-                id_recargo = response.data[0]['id_recargo']
-                logging.info(f"✅ Recargo cobrado registrado con ID: {id_recargo}")
-                return id_recargo
-            else:
-                logging.error("No se pudo registrar el recargo cobrado")
-                return None
-        except Exception as e:
-            logging.error(f"Error registrando recargo cobrado: {e}")
-            return None
-
-    def actualizar_pago_recargo(self, id_recargo: int, id_venta: int, id_detalle_venta: int) -> bool:
-        """Actualizar el estado de pago de un recargo cobrado cuando se genera la venta digital"""
-        try:
-            if not self.is_connected:
-                self.connect()
-            
-            update_data = {
-                'pagado': True,
-                'id_venta': id_venta,
-                'id_detalle_venta': id_detalle_venta
-            }
-            
-            response = self.client.table('recargos_cobrados').update(update_data).eq('id_recargo', id_recargo).execute()
-            
-            if response.data:
-                logging.info(f"✅ Recargo {id_recargo} marcado como pagado - Venta ID: {id_venta}")
-                return True
-            else:
-                logging.error(f"No se pudo actualizar el pago del recargo {id_recargo}")
-                return False
-        except Exception as e:
-            logging.error(f"Error actualizando pago del recargo {id_recargo}: {e}")
             return False
 
 
 # Ejemplo de uso
 if __name__ == "__main__":
-    # Configuración de conexión (solo necesita URL y KEY de Supabase)
+    # Configuración de conexión
     config = {
-        'url': os.getenv('SUPABASE_URL', 'https://xxxx.supabase.co'),
-        'key': os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIs...')
+        'host': 'localhost',
+        'port': '5432',
+        'database': 'pos_db',
+        'user': 'postgres',
+        'password': 'postgres'
     }
     
     try:
         # Crear instancia del gestor
         db = PostgresManager(config)
         
+        # Verificar base de datos
+        if db.initialize_database():
+            print("✅ Base de datos inicializada correctamente")
+        
         # Ejemplo: Autenticar usuario
         user = db.authenticate_user('admin', 'admin123')
         if user:
-            print(f"✅ Usuario autenticado: {user['nombre_completo']}")
-            print(f"   Rol: {user['rol']}")
+            print(f"✓ Usuario autenticado: {user['nombre_completo']}")
+            print(f"  Rol: {user['rol']}")
         else:
-            print("❌ Autenticación fallida")
-        
-        # Ejemplo: Actualizar pago de recargo cuando se genera venta digital
-        # recargo_id = 123  # ID del recargo obtenido al registrar la multa
-        # venta_id = 456    # ID de la venta generada
-        # detalle_venta_id = 789  # ID del detalle de venta
-        # exito = db.actualizar_pago_recargo(recargo_id, venta_id, detalle_venta_id)
-        # if exito:
-        #     print("✅ Recargo marcado como pagado")
+            print("✗ Autenticación fallida")
         
         # Cerrar conexión
         db.close()
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
+        traceback.print_exc()

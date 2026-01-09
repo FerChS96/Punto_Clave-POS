@@ -1,6 +1,6 @@
 """
 Ventana de Login Moderna con PySide6 para POS HTF
-Integrado con PostgreSQL y Supabase
+Integrado con PostgreSQL
 """
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -22,10 +22,9 @@ class LoginWindow(QMainWindow):
     # Signal que se emite cuando el login es exitoso
     login_success = Signal(dict)
     
-    def __init__(self, pg_manager=None, supabase_service=None):
+    def __init__(self, pg_manager=None):
         super().__init__()
         self.pg_manager = pg_manager
-        self.supabase_service = supabase_service
         
         # Usar colores del tema
         self.PRIMARY_BLUE = WindowsPhoneTheme.PRIMARY_BLUE

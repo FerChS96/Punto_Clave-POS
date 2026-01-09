@@ -41,11 +41,10 @@ class MovimientoInventarioWindow(QWidget):
     cerrar_solicitado = Signal()
     movimiento_registrado = Signal(dict)
     
-    def __init__(self, tipo_movimiento, pg_manager, supabase_service, user_data, parent=None):
+    def __init__(self, tipo_movimiento, pg_manager, user_data, parent=None):
         super().__init__(parent)
         self.tipo_movimiento = tipo_movimiento  # "entrada" o "salida"
         self.pg_manager = pg_manager
-        self.supabase_service = supabase_service
         self.user_data = user_data
         self.producto_seleccionado = None
         
@@ -78,10 +77,10 @@ class MovimientoInventarioWindow(QWidget):
         )
         main_layout.setSpacing(WindowsPhoneTheme.MARGIN_SMALL)
         
-        # Título
-        title_label = StyledLabel(titulo, bold=True, size=WindowsPhoneTheme.FONT_SIZE_TITLE)
-        title_label.setStyleSheet(f"color: {color}; padding: 10px 0;")
-        main_layout.addWidget(title_label)
+        # El título viene del TopBar, no necesitamos duplicarlo aquí
+        # title_label = StyledLabel(titulo, bold=True, size=WindowsPhoneTheme.FONT_SIZE_TITLE)
+        # title_label.setStyleSheet(f"color: {color}; padding: 10px 0;")
+        # main_layout.addWidget(title_label)
         
         # Scroll Area para el formulario
         scroll = QScrollArea()
