@@ -1,6 +1,6 @@
-# HTF Gimnasio - Sistema POS
+# Punto Clave - Sistema POS
 
-Sistema de Punto de Venta completo para HTF Gimnasio con arquitectura híbrida PostgreSQL + Supabase, optimizado para pantallas táctiles.
+Sistema de Punto de Venta completo para Punto Clave con arquitectura híbrida PostgreSQL + Supabase, optimizado para pantallas táctiles.
 
 ## 🚀 Características Principales
 
@@ -29,6 +29,13 @@ Sistema de Punto de Venta completo para HTF Gimnasio con arquitectura híbrida P
 - ✅ Historial de compras por miembro
 - ✅ Escaneo de QR para entrada rápida
 - ✅ Monitor de entradas en tiempo real
+
+### 🏢 Gestión de Proveedores
+- ✅ Catálogo completo de proveedores
+- ✅ Formulario de registro y edición de proveedores
+- ✅ Gestión de estado activo/inactivo
+- ✅ Validación de datos (email, teléfono)
+- ✅ Integración con base de datos PostgreSQL
 
 ### 🏪 Ventas Digitales y Pagos en Efectivo
 - ✅ Notificaciones de pagos pendientes
@@ -62,7 +69,7 @@ Sistema de Punto de Venta completo para HTF Gimnasio con arquitectura híbrida P
 ## 📁 Estructura del Proyecto
 
 ```
-POS_HTF/
+Punto_Clave/
 ├── main.py                          # Aplicación principal
 ├── requirements.txt                 # Dependencias Python
 ├── .env                            # Variables de entorno (Supabase, PostgreSQL)
@@ -78,6 +85,7 @@ POS_HTF/
 │   ├── sales_windows.py            # Módulo de ventas
 │   ├── inventario_window.py        # Gestión de inventario
 │   ├── nuevo_producto_window.py    # Formulario de productos
+│   ├── proveedores_window.py       # Gestión de proveedores
 │   ├── movimiento_inventario_window.py
 │   ├── miembros_window.py          # Gestión de miembros
 │   ├── asignacion_turnos_window.py # Turnos de caja
@@ -119,7 +127,7 @@ Crea un archivo `.env` con:
 # PostgreSQL Local
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
-POSTGRES_DB=htf_gimnasio
+POSTGRES_DB=punto_clave
 POSTGRES_USER=tu_usuario
 POSTGRES_PASSWORD=tu_password
 
@@ -196,6 +204,23 @@ precio = TouchMoneyInput(
 - **Triggers**: LISTEN/NOTIFY para notificaciones en tiempo real
 - **RLS**: Seguridad a nivel de fila habilitada
 
+#### Tablas Principales
+- `ca_productos`: Catálogo de productos
+- `ca_proveedores`: Gestión de proveedores
+  - `id`: SERIAL PRIMARY KEY
+  - `nombre`: VARCHAR(255) NOT NULL
+  - `telefono`: VARCHAR(20)
+  - `email`: VARCHAR(255)
+  - `direccion`: TEXT
+  - `fecha_creacion`: TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  - `activo`: BOOLEAN DEFAULT TRUE
+- `ventas`: Registro de ventas
+- `detalle_venta`: Detalles de productos vendidos
+- `inventario`: Control de stock
+- `movimientos_inventario`: Historial de movimientos
+- `miembros`: Registro de miembros del gimnasio
+- `turnos`: Asignación de turnos de caja
+
 ### Stack Tecnológico
 - **Framework UI**: PySide6 (Qt6 para Python)
 - **Base de Datos**: PostgreSQL 13+ / Supabase
@@ -251,9 +276,9 @@ Este proyecto está en constante evolución. Las áreas de desarrollo futuro inc
 
 ## 📄 Licencia
 
-Proyecto privado para Gimnasio HTF.
+Proyecto privado para Punto Clave.
 
 ---
 
-**Diseñado y desarrollado con ❤️ para Gimnasio HTF**  
+**Diseñado y desarrollado con ❤️ para Punto Clave**  
 Sistema POS moderno, táctil y completamente funcional.
