@@ -63,8 +63,18 @@ class MovimientoInventarioWindow(QWidget):
         layout.setSpacing(0)
         
         # Título según el tipo
-        titulo = "REGISTRAR ENTRADA" if self.tipo_movimiento == "entrada" else "REGISTRAR SALIDA"
-        color = WindowsPhoneTheme.TILE_GREEN if self.tipo_movimiento == "entrada" else WindowsPhoneTheme.TILE_RED
+        if self.tipo_movimiento == "entrada":
+            titulo = "REGISTRAR ENTRADA"
+            color = WindowsPhoneTheme.TILE_GREEN
+        elif self.tipo_movimiento == "salida":
+            titulo = "REGISTRAR SALIDA"
+            color = WindowsPhoneTheme.TILE_RED
+        elif self.tipo_movimiento == "ajuste":
+            titulo = "AJUSTE DE INVENTARIO"
+            color = WindowsPhoneTheme.TILE_ORANGE
+        else:
+            titulo = "MOVIMIENTO DE INVENTARIO"
+            color = WindowsPhoneTheme.TILE_BLUE
         
         # Contenedor principal
         main_container = QWidget()
@@ -128,13 +138,13 @@ class MovimientoInventarioWindow(QWidget):
         panel_layout.addWidget(cantidad_label)
         
         self.cantidad_spin = TouchNumericInput(
-            minimum=1,
+            minimum=-9999 if self.tipo_movimiento == "ajuste" else 1,
             maximum=9999,
             default_value=1
         )
         panel_layout.addWidget(self.cantidad_spin)
         
-        # Tipo de movimiento (solo para entradas)
+        # Tipo de movimiento
         if self.tipo_movimiento == "entrada":
             tipo_label = StyledLabel("Tipo de Entrada *", bold=True, size=WindowsPhoneTheme.FONT_SIZE_SUBTITLE)
             panel_layout.addWidget(tipo_label)
@@ -145,6 +155,21 @@ class MovimientoInventarioWindow(QWidget):
                 "Devolución",
                 "Ajuste de inventario",
                 "Donación",
+                "Otro"
+            ])
+            self.tipo_combo.setMinimumHeight(46)
+            self.tipo_combo.setFont(QFont(WindowsPhoneTheme.FONT_FAMILY, WindowsPhoneTheme.FONT_SIZE_NORMAL))
+            panel_layout.addWidget(self.tipo_combo)
+        elif self.tipo_movimiento == "ajuste":
+            tipo_label = StyledLabel("Tipo de Ajuste *", bold=True, size=WindowsPhoneTheme.FONT_SIZE_SUBTITLE)
+            panel_layout.addWidget(tipo_label)
+            
+            self.tipo_combo = QComboBox()
+            self.tipo_combo.addItems([
+                "Inventario físico",
+                "Corrección de error",
+                "Producto dañado",
+                "Pérdida",
                 "Otro"
             ])
             self.tipo_combo.setMinimumHeight(46)
@@ -202,7 +227,7 @@ class MovimientoInventarioWindow(QWidget):
         buttons_layout.setSpacing(WindowsPhoneTheme.TILE_SPACING)
         
         btn_guardar = TileButton(
-            "Registrar " + ("Entrada" if self.tipo_movimiento == "entrada" else "Salida"),
+            "Registrar " + ("Entrada" if self.tipo_movimiento == "entrada" else "Salida" if self.tipo_movimiento == "salida" else "Ajuste"),
             "fa5s.check",
             WindowsPhoneTheme.TILE_GREEN  # Siempre verde
         )
@@ -314,7 +339,15 @@ class MovimientoInventarioWindow(QWidget):
             return
         
         cantidad = self.cantidad_spin.value()
-        if cantidad <= 0:
+        if self.tipo_movimiento == "ajuste":
+            if cantidad == 0:
+                show_warning_dialog(
+                    self,
+                    "Cantidad inválida",
+                    "La cantidad del ajuste debe ser diferente de 0"
+                )
+                return
+        elif cantidad <= 0:
             show_warning_dialog(
                 self,
                 "Cantidad inválida",
@@ -335,12 +368,14 @@ class MovimientoInventarioWindow(QWidget):
         
         try:
             # Preparar datos del movimiento
-            motivo_texto = self.tipo_combo.currentText() if self.tipo_movimiento == "entrada" else self.motivo_combo.currentText()
+            motivo_texto = self.tipo_combo.currentText() if self.tipo_movimiento in ["entrada", "ajuste"] else self.motivo_combo.currentText()
             fecha = self.fecha_input.date().toPython().strftime("%Y-%m-%d")
             observaciones = self.observaciones_input.toPlainText().strip() or None
             
             # Mapear el motivo seleccionado al tipo de movimiento del enum
-            if self.tipo_movimiento == "entrada":
+            if self.tipo_movimiento == "ajuste":
+                tipo_movimiento_db = "ajuste"
+            elif self.tipo_movimiento == "entrada":
                 if motivo_texto in ["Devolución", "Devolucion"]:
                     tipo_movimiento_db = "devolucion"
                 elif motivo_texto == "Ajuste de inventario":
@@ -365,7 +400,11 @@ class MovimientoInventarioWindow(QWidget):
                 nuevo_stock = stock_anterior + cantidad
                 fecha_entrada = datetime.now().isoformat()
                 fecha_salida = None
-            else:
+            elif self.tipo_movimiento == "ajuste":
+                nuevo_stock = stock_anterior + cantidad
+                fecha_entrada = datetime.now().isoformat() if cantidad > 0 else None
+                fecha_salida = datetime.now().isoformat() if cantidad < 0 else None
+            else:  # salida
                 nuevo_stock = stock_anterior - cantidad
                 fecha_entrada = None
                 fecha_salida = datetime.now().isoformat()
@@ -392,8 +431,8 @@ class MovimientoInventarioWindow(QWidget):
             movimiento_data = {
                 'codigo_interno': self.producto_seleccionado['codigo_interno'],
                 'tipo_producto': self.producto_seleccionado['tipo_producto'],
-                'tipo_movimiento': 'entrada' if self.tipo_movimiento == "entrada" else tipo_movimiento_db,
-                'cantidad': cantidad if self.tipo_movimiento == "entrada" else -cantidad,
+                'tipo_movimiento': self.tipo_movimiento if self.tipo_movimiento == "ajuste" else ('entrada' if self.tipo_movimiento == "entrada" else tipo_movimiento_db),
+                'cantidad': cantidad if self.tipo_movimiento in ["entrada", "ajuste"] else -cantidad,
                 'stock_anterior': stock_anterior,
                 'stock_nuevo': nuevo_stock,
                 'motivo': motivo_texto if self.tipo_movimiento != "entrada" else None,

@@ -1,6 +1,6 @@
-"""
-Ventana de Login Moderna con PySide6 para POS HTF
-Integrado con PostgreSQL
+"""Ventana de login moderna con PySide6 para Punto Clave.
+
+Integrado con PostgreSQL.
 """
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -25,22 +25,15 @@ class LoginWindow(QMainWindow):
     def __init__(self, pg_manager=None):
         super().__init__()
         self.pg_manager = pg_manager
-        
-        # Usar colores del tema
-        self.PRIMARY_BLUE = WindowsPhoneTheme.PRIMARY_BLUE
-        self.SECONDARY_BLUE = "#2563eb"
-        self.ACCENT_RED = WindowsPhoneTheme.TILE_RED
-        self.HOVER_BLUE = WindowsPhoneTheme.TILE_BLUE
-        
-        # Usar fuente del tema
-        self.font_text = WindowsPhoneTheme.FONT_FAMILY
-        self.font_title = WindowsPhoneTheme.FONT_FAMILY
+
+        # Tokens del sistema de diseño
+        self.theme = WindowsPhoneTheme
         
         self.setup_ui()
         
     def setup_ui(self):
         """Configurar la interfaz de usuario"""
-        self.setWindowTitle("HTF Gimnasio - Sistema POS")
+        self.setWindowTitle("Punto Clave")
         self.setFixedSize(1000, 600)
         
         # Establecer icono de la ventana
@@ -77,35 +70,35 @@ class LoginWindow(QMainWindow):
         
         layout = QVBoxLayout(branding_frame)
         layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(20)
+        layout.setSpacing(self.theme.MARGIN_MEDIUM)
         
         # Logo/Título
-        title = QLabel("HTF")
+        title = QLabel("PUNTO\nCLAVE")
         title.setObjectName("brandingTitle")
         title.setAlignment(Qt.AlignCenter)
-        title.setFont(QFont("Segoe UI", 72, QFont.Bold))
-        
-        subtitle = QLabel("GIMNASIO")
+        title.setFont(QFont(self.theme.FONT_FAMILY, 64, QFont.Bold))
+
+        subtitle = QLabel("Sistema POS")
         subtitle.setObjectName("brandingSubtitle")
         subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setFont(QFont("Segoe UI", 24, QFont.Light))
+        subtitle.setFont(QFont(self.theme.FONT_FAMILY, self.theme.FONT_SIZE_LARGE, QFont.Light))
         
         description = QLabel("Sistema de Punto de Venta")
         description.setObjectName("brandingDescription")
         description.setAlignment(Qt.AlignCenter)
-        description.setFont(QFont("Segoe UI", 12))
+        description.setFont(QFont(self.theme.FONT_FAMILY, self.theme.FONT_SIZE_NORMAL))
         
         version = QLabel("v1.0.0")
         version.setObjectName("brandingVersion")
         version.setAlignment(Qt.AlignCenter)
-        version.setFont(QFont("Segoe UI", 10))
+        version.setFont(QFont(self.theme.FONT_FAMILY, self.theme.FONT_SIZE_SMALL))
         
         layout.addStretch()
         layout.addWidget(title)
         layout.addWidget(subtitle)
-        layout.addSpacing(10)
+        layout.addSpacing(self.theme.MARGIN_SMALL)
         layout.addWidget(description)
-        layout.addSpacing(20)
+        layout.addSpacing(self.theme.MARGIN_MEDIUM)
         layout.addWidget(version)
         layout.addStretch()
         
@@ -120,37 +113,45 @@ class LoginWindow(QMainWindow):
         layout = QVBoxLayout(login_frame)
         layout.setAlignment(Qt.AlignCenter)
         layout.setContentsMargins(80, 0, 80, 0)
-        layout.setSpacing(25)
+        layout.setSpacing(self.theme.MARGIN_SMALL)
+
+        # Limitar ancho del formulario para evitar que se vea “estirado”
+        form_max_width = 520
         
         # Título del login
         login_title = QLabel("Iniciar Sesión")
         login_title.setObjectName("loginTitle")
         login_title.setAlignment(Qt.AlignCenter)
-        login_title.setFont(QFont("Segoe UI", 28, QFont.Bold))
+        login_title.setFont(QFont(self.theme.FONT_FAMILY, 34, QFont.Bold))
+        login_title.setMaximumWidth(form_max_width)
         
         # Campo de usuario
         user_label = QLabel("Usuario")
         user_label.setObjectName("fieldLabel")
-        user_label.setFont(QFont("Segoe UI", 11))
+        user_label.setFont(QFont(self.theme.FONT_FAMILY, 11))
+        user_label.setMaximumWidth(form_max_width)
         
         self.username_input = QLineEdit()
         self.username_input.setObjectName("inputField")
         self.username_input.setPlaceholderText("Ingresa tu usuario")
         self.username_input.setMinimumHeight(50)
-        self.username_input.setFont(QFont("Segoe UI", 12))
+        self.username_input.setFont(QFont(self.theme.FONT_FAMILY, 12))
+        self.username_input.setMaximumWidth(form_max_width)
         self.username_input.returnPressed.connect(self.handle_login)
         
         # Campo de contraseña
         password_label = QLabel("Contraseña")
         password_label.setObjectName("fieldLabel")
-        password_label.setFont(QFont("Segoe UI", 11))
+        password_label.setFont(QFont(self.theme.FONT_FAMILY, 11))
+        password_label.setMaximumWidth(form_max_width)
         
         self.password_input = QLineEdit()
         self.password_input.setObjectName("inputField")
         self.password_input.setPlaceholderText("Ingresa tu contraseña")
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.setMinimumHeight(50)
-        self.password_input.setFont(QFont("Segoe UI", 12))
+        self.password_input.setFont(QFont(self.theme.FONT_FAMILY, 12))
+        self.password_input.setMaximumWidth(form_max_width)
         self.password_input.returnPressed.connect(self.handle_login)
 
         # Icono para mostrar/ocultar contraseña (sin overlays para evitar recortes)
@@ -160,7 +161,7 @@ class LoginWindow(QMainWindow):
 
             self.password_input.setTextMargins(0, 0, 36, 0)
             self._toggle_password_action = self.password_input.addAction(
-                qta.icon('fa5s.eye', color=self.PRIMARY_BLUE),
+                qta.icon('fa5s.eye', color=self.theme.PRIMARY_BLUE),
                 QLineEdit.TrailingPosition
             )
             self._toggle_password_action.setToolTip("Mostrar contraseña")
@@ -172,7 +173,8 @@ class LoginWindow(QMainWindow):
         self.login_button = QPushButton("INICIAR SESIÓN")
         self.login_button.setObjectName("loginButton")
         self.login_button.setMinimumHeight(55)
-        self.login_button.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.login_button.setFont(QFont(self.theme.FONT_FAMILY, 12, QFont.Bold))
+        self.login_button.setMaximumWidth(form_max_width)
         self.login_button.setCursor(Qt.PointingHandCursor)
         self.login_button.clicked.connect(self.handle_login)
         
@@ -180,54 +182,56 @@ class LoginWindow(QMainWindow):
         info_label = QLabel("")
         info_label.setObjectName("infoLabel")
         info_label.setAlignment(Qt.AlignCenter)
-        info_label.setFont(QFont("Segoe UI", 9))
+        info_label.setFont(QFont(self.theme.FONT_FAMILY, 9))
+        info_label.setMaximumWidth(form_max_width)
         
         # Agregar widgets al layout
         layout.addWidget(login_title)
-        layout.addSpacing(30)
+        layout.addSpacing(self.theme.MARGIN_LARGE)
         layout.addWidget(user_label)
         layout.addWidget(self.username_input)
         layout.addWidget(password_label)
         layout.addWidget(self.password_input)
-        layout.addSpacing(10)
+        layout.addSpacing(self.theme.MARGIN_SMALL)
         layout.addWidget(self.login_button)
-        layout.addSpacing(10)
+        layout.addSpacing(self.theme.MARGIN_SMALL)
         layout.addWidget(info_label)
         
         parent_layout.addWidget(login_frame)
         
     def apply_styles(self):
-        """Aplicar estilos QSS con colores del logo HTF"""
+        """Aplicar estilos QSS usando tokens del sistema de diseño."""
+        theme = self.theme
         self.setStyleSheet(f"""
             QMainWindow {{
-                background-color: #f5f5f5;
+                background-color: {theme.BG_LIGHT};
             }}
             
             #brandingPanel {{
-                background: {self.PRIMARY_BLUE};
+                background: {theme.PRIMARY_BLUE};
                 border: none;
             }}
-            
+
             #brandingTitle {{
                 color: white;
                 font-weight: bold;
-                font-family: '{self.font_title}';
+                font-family: '{theme.FONT_FAMILY}';
             }}
             
             #brandingSubtitle {{
                 color: rgba(255, 255, 255, 0.95);
-                letter-spacing: 8px;
-                font-family: '{self.font_title}';
+                letter-spacing: 3px;
+                font-family: '{theme.FONT_FAMILY}';
             }}
             
             #brandingDescription {{
                 color: rgba(255, 255, 255, 0.8);
-                font-family: '{self.font_text}';
+                font-family: '{theme.FONT_FAMILY}';
             }}
             
             #brandingVersion {{
                 color: rgba(255, 255, 255, 0.6);
-                font-family: '{self.font_text}';
+                font-family: '{theme.FONT_FAMILY}';
             }}
             
             #loginPanel {{
@@ -236,58 +240,58 @@ class LoginWindow(QMainWindow):
             }}
             
             #loginTitle {{
-                color: {self.PRIMARY_BLUE};
+                color: {theme.PRIMARY_BLUE};
                 margin-bottom: 10px;
-                font-family: '{self.font_title}';
+                font-family: '{theme.FONT_FAMILY}';
                 font-weight: bold;
             }}
             
             #fieldLabel {{
-                color: #374151;
+                color: {theme.TEXT_PRIMARY};
                 margin-bottom: 5px;
-                font-family: '{self.font_text}';
+                font-family: '{theme.FONT_FAMILY}';
                 font-weight: 600;
             }}
             
             #inputField {{
                 padding: 12px 16px;
-                border: 2px solid #d1d5db;
-                border-radius: 6px;
+                border: 2px solid {theme.BORDER_COLOR};
+                border-radius: 0px;
                 background-color: white;
-                color: #1f2937;
-                font-family: '{self.font_text}';
-                font-size: 14px;
+                color: {theme.TEXT_PRIMARY};
+                font-family: '{theme.FONT_FAMILY}';
+                font-size: {theme.FONT_SIZE_NORMAL}px;
             }}
             
             #inputField:focus {{
-                border: 2px solid {self.PRIMARY_BLUE};
+                border: 2px solid {theme.PRIMARY_BLUE};
                 background-color: white;
             }}
             
             #loginButton {{
-                background: {self.PRIMARY_BLUE};
+                background: {theme.PRIMARY_BLUE};
                 color: white;
                 border: none;
-                border-radius: 6px;
+                border-radius: 0px;
                 padding: 15px;
                 margin-top: 10px;
-                font-family: '{self.font_text}';
+                font-family: '{theme.FONT_FAMILY}';
                 font-weight: bold;
-                font-size: 14px;
+                font-size: {theme.FONT_SIZE_NORMAL}px;
             }}
             
             #loginButton:hover {{
-                background: {self.HOVER_BLUE};
+                background: {theme.TILE_BLUE};
             }}
             
             #loginButton:pressed {{
-                background: {self.SECONDARY_BLUE};
+                background: {theme.PRIMARY_BLUE};
             }}
             
             #infoLabel {{
-                color: #9ca3af;
+                color: {theme.TEXT_SECONDARY};
                 font-style: italic;
-                font-family: '{self.font_text}';
+                font-family: '{theme.FONT_FAMILY}';
             }}
         """)
         
@@ -300,12 +304,8 @@ class LoginWindow(QMainWindow):
         self.move(x, y)
         
     def update_connection_status(self):
-        """Actualizar el indicador de conexión"""
-        # Verificar conexión a PostgreSQL local
-        pg_connected = False
-    def update_connection_status(self):
-        """Actualizar estado de conexión - Eliminado para simplificar UI"""
-        pass
+        """Actualizar estado de conexión (no se muestra en el login)."""
+        return
             
     def handle_login(self):
         """Manejar el evento de login"""
@@ -343,10 +343,10 @@ class LoginWindow(QMainWindow):
                 self.login_button.setText("✓ ACCESO CONCEDIDO")
                 self.login_button.setStyleSheet("""
                     QPushButton {
-                        background: #38a169;
+                        background: #00a300;
                         color: white;
                         border: none;
-                        border-radius: 6px;
+                        border-radius: 0px;
                         padding: 15px;
                         font-weight: bold;
                     }
@@ -385,11 +385,11 @@ class LoginWindow(QMainWindow):
 
         if self.password_input.echoMode() == QLineEdit.Password:
             self.password_input.setEchoMode(QLineEdit.Normal)
-            self._toggle_password_action.setIcon(qta.icon('fa5s.eye-slash', color=self.PRIMARY_BLUE))
+            self._toggle_password_action.setIcon(qta.icon('fa5s.eye-slash', color=self.theme.PRIMARY_BLUE))
             self._toggle_password_action.setToolTip("Ocultar contraseña")
         else:
             self.password_input.setEchoMode(QLineEdit.Password)
-            self._toggle_password_action.setIcon(qta.icon('fa5s.eye', color=self.PRIMARY_BLUE))
+            self._toggle_password_action.setIcon(qta.icon('fa5s.eye', color=self.theme.PRIMARY_BLUE))
             self._toggle_password_action.setToolTip("Mostrar contraseña")
             
     def show_error(self, message):

@@ -516,6 +516,18 @@ def apply_windows_phone_stylesheet(widget):
             background-color: {theme.TILE_PURPLE};
         }}
         
+        QPushButton#tabButton[tileColor="{theme.TILE_BLUE}"] {{
+            background-color: {theme.TILE_BLUE};
+        }}
+        
+        QPushButton#tabButton[tileColor="{theme.TILE_TEAL}"] {{
+            background-color: {theme.TILE_TEAL};
+        }}
+        
+        QPushButton#tabButton[tileColor="{theme.TILE_MAGENTA}"] {{
+            background-color: {theme.TILE_MAGENTA};
+        }}
+        
         QPushButton#tabButton[tileColor="{theme.TILE_GRAY}"] {{
             background-color: {theme.TILE_GRAY};
         }}

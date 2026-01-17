@@ -1,6 +1,4 @@
-"""
-Configuración de la aplicación POS HTF
-"""
+"""Configuración de la aplicación Punto Clave."""
 
 import os
 from dotenv import load_dotenv
@@ -11,7 +9,7 @@ class Config:
         load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'), encoding='utf-8')
         
         # Configuración de la aplicación
-        self.APP_NAME = "HTF Gimnasio POS"
+        self.APP_NAME = "Punto Clave"
         self.APP_VERSION = "1.0.0"
         
         # Configuración de UI

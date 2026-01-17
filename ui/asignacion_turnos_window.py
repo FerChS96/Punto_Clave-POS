@@ -343,9 +343,15 @@ class AsignacionTurnosWindow(QWidget):
     def cargar_empleados(self):
         """Cargar lista de empleados activos"""
         try:
-            # Obtener empleados activos
-            response = self.pg_manager.client.table('usuarios').select('id_usuario, nombre_completo, nombre_usuario').eq('activo', True).order('nombre_completo').execute()
-            self.empleados = response.data if response.data else []
+            # Obtener empleados activos usando PostgreSQL
+            empleados = self.pg_manager.query("""
+                SELECT id_usuario, nombre_completo, nombre_usuario
+                FROM usuarios
+                WHERE activo = TRUE
+                ORDER BY nombre_completo
+            """)
+            
+            self.empleados = empleados
             
             self.empleado_combo.clear()
             for empleado in self.empleados:
@@ -363,20 +369,23 @@ class AsignacionTurnosWindow(QWidget):
         try:
             fecha_desde = self.fecha_filtro.date().toPython()
             
-            # Obtener turnos desde la fecha
-            response = self.pg_manager.client.table('turnos_caja').select('id_turno, id_usuario, fecha_apertura, monto_inicial, cerrado, fecha_cierre').gte('fecha_apertura', str(fecha_desde)).order('fecha_apertura', desc=True).execute()
+            # Obtener turnos desde la fecha usando PostgreSQL
+            turnos_raw = self.pg_manager.query("""
+                SELECT 
+                    t.id_turno, t.id_usuario, t.fecha_apertura, t.monto_inicial, 
+                    t.cerrado, t.fecha_cierre, u.nombre_completo
+                FROM turnos_caja t
+                LEFT JOIN usuarios u ON t.id_usuario = u.id_usuario
+                WHERE t.fecha_apertura >= %s
+                ORDER BY t.fecha_apertura DESC
+            """, (fecha_desde,))
             
-            turnos_raw = response.data if response.data else []
             self.turnos_asignados = []
             
             for turno in turnos_raw:
-                # Obtener datos del usuario
-                response_usuario = self.pg_manager.client.table('usuarios').select('nombre_completo').eq('id_usuario', turno['id_usuario']).single().execute()
-                usuario = response_usuario.data if response_usuario.data else {}
-                
-                # Construir registro completo
+                # Los datos ya incluyen el nombre completo del usuario
                 turno_completo = turno.copy()
-                turno_completo['nombre_completo'] = usuario.get('nombre_completo', 'Desconocido')
+                turno_completo['nombre_completo'] = turno.get('nombre_completo', 'Desconocido')
                 self.turnos_asignados.append(turno_completo)
                 self.actualizar_tabla()
                 
@@ -497,8 +506,12 @@ class AsignacionTurnosWindow(QWidget):
             fecha_apertura = datetime.combine(fecha_turno, hora_inicio)
             
             # Verificar si ya existe un turno para ese usuario en esa fecha
-            response = self.pg_manager.client.table('turnos_caja').select('id_turno').eq('id_usuario', id_usuario).eq('cerrado', False).execute()
-            turnos_mismo_dia = [t for t in (response.data or []) if t.get('fecha_apertura', '').startswith(str(fecha_turno))]
+            turnos_mismo_dia = self.pg_manager.query("""
+                SELECT id_turno 
+                FROM turnos_caja 
+                WHERE id_usuario = %s AND cerrado = FALSE 
+                AND DATE(fecha_apertura) = %s
+            """, (id_usuario, fecha_turno))
             
             if len(turnos_mismo_dia) > 0:
                 show_warning_dialog(
@@ -523,16 +536,18 @@ class AsignacionTurnosWindow(QWidget):
             ):
                 return
             
-            # Insertar turno
-            turno_data = {
-                'id_usuario': id_usuario,
-                'fecha_apertura': str(fecha_apertura),
-                'monto_inicial': monto_inicial,
-                'monto_esperado': monto_inicial,  # Inicialmente el esperado es igual al inicial
-                'notas_apertura': f"Turno {turno_nombre}",
-                'cerrado': False
-            }
-            self.pg_manager.client.table('turnos_caja').insert(turno_data).execute()
+            # Insertar turno usando PostgreSQL
+            self.pg_manager.query("""
+                INSERT INTO turnos_caja (
+                    numero_turno, id_usuario, fecha_apertura, monto_inicial, 
+                    notas_apertura, cerrado
+                ) VALUES (
+                    %s, %s, %s, %s, %s, FALSE
+                )
+            """, (
+                turno_nombre, id_usuario, fecha_apertura, monto_inicial, 
+                f"Turno {turno_nombre}"
+            ))
             
             show_success_dialog(self, "Éxito", "Turno creado y asignado correctamente")
             
@@ -554,15 +569,19 @@ class AsignacionTurnosWindow(QWidget):
                 return
             
             # Verificar que el turno no esté cerrado
-            response = self.pg_manager.client.table('turnos_caja').select('cerrado').eq('id_turno', id_turno).single().execute()
-            turno = response.data if response.data else None
+            turno_check = self.pg_manager.query("""
+                SELECT cerrado FROM turnos_caja 
+                WHERE id_turno = %s
+            """, (id_turno,))
             
-            if turno and turno.get('cerrado'):
+            if turno_check and turno_check[0]['cerrado']:
                 show_warning_dialog(self, "Advertencia", "No se puede eliminar un turno cerrado")
                 return
             
             # Eliminar turno
-            self.pg_manager.client.table('turnos_caja').delete().eq('id_turno', id_turno).execute()
+            self.pg_manager.query("""
+                DELETE FROM turnos_caja WHERE id_turno = %s
+            """, (id_turno,))
             
             show_success_dialog(self, "Éxito", "Turno eliminado correctamente")
             

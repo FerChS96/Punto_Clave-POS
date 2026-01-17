@@ -448,6 +448,23 @@ class PostgresManager:
             logging.error(f"Error buscando productos: {e}")
             return []
     
+    def obtener_producto_por_codigo(self, codigo_interno: str) -> Optional[Dict]:
+        """Obtener producto por código interno"""
+        try:
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT 
+                        p.id_producto, p.codigo_interno, p.nombre, p.es_inventariable,
+                        p.tipo_producto_fisico as tipo_producto
+                    FROM ca_productos p
+                    WHERE p.activo = TRUE AND p.codigo_interno = %s
+                """, (codigo_interno,))
+                result = cursor.fetchone()
+                return dict(result) if result else None
+        except Exception as e:
+            logging.error(f"Error obteniendo producto por código: {e}")
+            return None
+    
     def obtener_movimientos_completos(self, limite: int = 1000) -> List[Dict]:
         """Obtener movimientos de inventario completos con información de productos y usuarios"""
         try:
@@ -1040,6 +1057,16 @@ class PostgresManager:
                         f"Venta {numero_ticket}"
                     ))
                 
+                # Actualizar totales del turno si la venta es en efectivo
+                id_turno = venta_data.get('id_turno')
+                metodo_pago = venta_data.get('metodo_pago', 'efectivo')
+                if id_turno and metodo_pago == 'efectivo':
+                    cursor.execute("""
+                        UPDATE turnos_caja
+                        SET total_efectivo = total_efectivo + %s
+                        WHERE id_turno = %s AND cerrado = FALSE
+                    """, (venta_data['total'], id_turno))
+                
                 self.connection.commit()
                 logging.info(f"✅ Venta creada: {numero_ticket}, Total: ${venta_data['total']:.2f}")
                 return venta_id
@@ -1087,6 +1114,183 @@ class PostgresManager:
         except Exception as e:
             logging.error(f"Error obteniendo total de clientes: {e}")
             return 0
+    
+    def obtener_ultimo_codigo_cliente(self) -> Optional[str]:
+        """Obtener el último código de cliente para generar uno nuevo"""
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT codigo FROM clientes
+                    WHERE codigo LIKE 'CLI%'
+                    ORDER BY CAST(SUBSTRING(codigo FROM 4) AS INTEGER) DESC
+                    LIMIT 1
+                """)
+                result = cursor.fetchone()
+                return result[0] if result else None
+        except Exception as e:
+            logging.error(f"Error obteniendo último código de cliente: {e}")
+            return None
+    
+    def verificar_codigo_cliente_existe(self, codigo: str) -> bool:
+        """Verificar si un código de cliente ya existe"""
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM clientes
+                    WHERE codigo = %s
+                """, (codigo,))
+                result = cursor.fetchone()
+                return result[0] > 0 if result else False
+        except Exception as e:
+            logging.error(f"Error verificando código de cliente: {e}")
+            return False
+    
+    def guardar_cliente(self, cliente_data: Dict) -> Optional[int]:
+        """Guardar un nuevo cliente en la base de datos"""
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO clientes (
+                        codigo, nombres, apellido_paterno, apellido_materno,
+                        telefono, email, rfc, fecha_nacimiento,
+                        contacto_emergencia, telefono_emergencia,
+                        limite_credito, notas, activo, fecha_registro, usuario_registro
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id_cliente
+                """, (
+                    cliente_data['codigo'],
+                    cliente_data['nombres'],
+                    cliente_data['apellido_paterno'],
+                    cliente_data['apellido_materno'],
+                    cliente_data.get('telefono'),
+                    cliente_data.get('email'),
+                    cliente_data.get('rfc'),
+                    cliente_data.get('fecha_nacimiento'),
+                    cliente_data.get('contacto_emergencia'),
+                    cliente_data.get('telefono_emergencia'),
+                    cliente_data.get('limite_credito', 0.0),
+                    cliente_data.get('notas'),
+                    cliente_data.get('activo', True),
+                    cliente_data.get('fecha_registro', datetime.now()),
+                    cliente_data.get('usuario_registro')
+                ))
+                
+                result = cursor.fetchone()
+                cliente_id = result[0] if result else None
+                
+                self.connection.commit()
+                logging.info(f"Cliente guardado: {cliente_data['codigo']} (ID: {cliente_id})")
+                return cliente_id
+                
+        except Exception as e:
+            try:
+                self.connection.rollback()
+            except:
+                pass
+            logging.error(f"Error guardando cliente: {e}")
+            return None
+    
+    def obtener_cuentas_por_cobrar(self, filtros=None) -> List[Dict]:
+        """Obtener listado de cuentas por cobrar con filtros"""
+        try:
+            if not self.connection or self.connection.closed:
+                self.connect()
+            
+            filtros = filtros or {}
+            
+            query = """
+                SELECT 
+                    cxc.id_cxc,
+                    cxc.numero_cuenta,
+                    cxc.total,
+                    cxc.saldo,
+                    cxc.pagado,
+                    cxc.fecha_vencimiento,
+                    cxc.estado,
+                    cxc.creada_en,
+                    cxc.pagada,
+                    -- Información del cliente
+                    c.id_cliente,
+                    CONCAT(c.nombres, ' ', COALESCE(c.apellido_paterno, ''), ' ', COALESCE(c.apellido_materno, '')) as cliente,
+                    c.telefono,
+                    c.email,
+                    -- Información de la venta
+                    v.id_venta,
+                    v.numero_ticket,
+                    v.fecha as fecha_venta,
+                    -- Cálculos
+                    CASE 
+                        WHEN cxc.fecha_vencimiento < CURRENT_DATE AND cxc.saldo > 0 
+                        THEN CURRENT_DATE - cxc.fecha_vencimiento 
+                        ELSE 0 
+                    END as dias_vencidos,
+                    -- Último pago
+                    (SELECT MAX(fecha_pago) FROM cxc_detalle_pagos WHERE id_cxc = cxc.id_cxc) as ultimo_pago
+                FROM cuentas_por_cobrar cxc
+                INNER JOIN clientes c ON cxc.id_cliente = c.id_cliente
+                INNER JOIN ventas v ON cxc.id_venta = v.id_venta
+                WHERE cxc.activo = TRUE
+            """
+            
+            params = []
+            
+            # Aplicar filtros
+            if 'cliente' in filtros:
+                query += " AND LOWER(CONCAT(c.nombres, ' ', COALESCE(c.apellido_paterno, ''), ' ', COALESCE(c.apellido_materno, ''))) LIKE LOWER(%s)"
+                params.append(f"%{filtros['cliente']}%")
+            
+            if 'estado' in filtros:
+                query += " AND cxc.estado = %s"
+                params.append(filtros['estado'])
+            
+            if 'fecha_desde' in filtros:
+                query += " AND cxc.fecha_vencimiento >= %s"
+                params.append(filtros['fecha_desde'])
+            
+            if 'fecha_hasta' in filtros:
+                query += " AND cxc.fecha_vencimiento <= %s"
+                params.append(filtros['fecha_hasta'])
+            
+            if filtros.get('solo_pendientes'):
+                query += " AND cxc.estado IN ('activa', 'vencida') AND cxc.saldo > 0"
+            
+            # Ordenar por fecha de vencimiento
+            query += " ORDER BY cxc.fecha_vencimiento ASC, cxc.saldo DESC"
+            
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                
+                # Convertir a lista de diccionarios
+                cuentas = []
+                for row in rows:
+                    cuenta = dict(row)
+                    # Convertir fechas
+                    if cuenta.get('fecha_vencimiento'):
+                        cuenta['fecha_vencimiento'] = cuenta['fecha_vencimiento'].date()
+                    if cuenta.get('fecha_venta'):
+                        cuenta['fecha_venta'] = cuenta['fecha_venta'].date()
+                    if cuenta.get('ultimo_pago'):
+                        cuenta['ultimo_pago'] = cuenta['ultimo_pago'].date()
+                    if cuenta.get('creada_en'):
+                        cuenta['creada_en'] = cuenta['creada_en'].date()
+                    
+                    cuentas.append(cuenta)
+                
+                return cuentas
+                
+        except Exception as e:
+            logging.error(f"Error obteniendo cuentas por cobrar: {e}")
+            return []
     
     # ========== TURNOS DE CAJA ==========
     
@@ -1207,6 +1411,157 @@ class PostgresManager:
                 pass
             logging.error(f"Error cerrando turno de caja: {e}")
             return False
+
+    # ==================== MÉTODOS PARA COMPRAS Y GASTOS ====================
+
+    def obtener_tipos_cuenta_pagar(self) -> List[Dict]:
+        """Obtener lista de tipos de cuenta por pagar activos"""
+        try:
+            # Asegurar que no haya transacciones pendientes
+            if self.connection and not self.connection.closed:
+                try:
+                    self.connection.rollback()
+                except:
+                    pass
+            
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT id_tipo_cuenta_pagar, codigo, nombre, descripcion, categoria
+                    FROM ca_tipo_cuenta_pagar
+                    WHERE activo = TRUE
+                    ORDER BY nombre
+                """)
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error obteniendo tipos de cuenta por pagar: {e}")
+            return []
+
+    def obtener_proveedores_activos(self) -> List[Dict]:
+        """Obtener lista de proveedores activos"""
+        try:
+            # Asegurar que no haya transacciones pendientes
+            if self.connection and not self.connection.closed:
+                try:
+                    self.connection.rollback()
+                except:
+                    pass
+            
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT id_proveedor, codigo, razon_social, nombre_comercial,
+                           contacto_telefono, contacto_email as email, activo
+                    FROM ca_proveedores
+                    WHERE activo = TRUE
+                    ORDER BY razon_social
+                """)
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logging.error(f"Error obteniendo proveedores activos: {e}")
+            return []
+
+    def obtener_proveedor_por_id(self, id_proveedor: int) -> Optional[Dict]:
+        """Obtener proveedor por ID"""
+        try:
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT * FROM ca_proveedores
+                    WHERE id_proveedor = %s AND activo = TRUE
+                """, (id_proveedor,))
+                result = cursor.fetchone()
+                return dict(result) if result else None
+        except Exception as e:
+            logging.error(f"Error obteniendo proveedor por ID: {e}")
+            return None
+
+    def guardar_compra_gasto(self, datos_compra: Dict) -> bool:
+        """Guardar una compra o gasto en la base de datos"""
+        try:
+            with self.connection.cursor() as cursor:
+                # Insertar en cuentas_por_pagar
+                cursor.execute("""
+                    INSERT INTO cuentas_por_pagar (
+                        numero_cuenta, id_tipo_cuenta_pagar, id_proveedor, id_usuario,
+                        fecha_cuenta, subtotal, descuento, impuestos, total,
+                        numero_factura, forma_pago, fecha_vencimiento, notas
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id_cuenta_pagar
+                """, (
+                    datos_compra['numero_cuenta'],
+                    datos_compra['id_tipo_cuenta_pagar'],
+                    datos_compra.get('id_proveedor'),
+                    datos_compra['id_usuario'],
+                    datos_compra['fecha_cuenta'],
+                    datos_compra['subtotal'],
+                    datos_compra['descuento'],
+                    datos_compra['impuestos'],
+                    datos_compra['total'],
+                    datos_compra.get('numero_factura'),
+                    datos_compra.get('forma_pago', 'credito'),
+                    datos_compra.get('fecha_vencimiento'),
+                    datos_compra.get('notas')
+                ))
+
+                id_cuenta_pagar = cursor.fetchone()[0]
+
+                # Si es una compra con productos, insertar detalles
+                if datos_compra.get('tipo_compra') == 'compra' and datos_compra.get('detalles'):
+                    for detalle in datos_compra['detalles']:
+                        cursor.execute("""
+                            INSERT INTO cxp_detalle_productos (
+                                id_cuenta_pagar, id_producto, cantidad, precio_unitario,
+                                descuento_linea, subtotal_linea
+                            ) VALUES (%s, %s, %s, %s, %s, %s)
+                        """, (
+                            id_cuenta_pagar,
+                            detalle['id_producto'],
+                            detalle['cantidad'],
+                            detalle['precio_unitario'],
+                            0,  # descuento_linea
+                            detalle['subtotal']
+                        ))
+
+                        # Actualizar stock si es compra de productos inventariables
+                        producto = self.obtener_producto_por_codigo(detalle['codigo_interno'])
+                        if producto and producto.get('es_inventariable', True):
+                            # Obtener ubicación por defecto (primera activa)
+                            ubicacion = self.obtener_ubicacion_por_defecto()
+                            if ubicacion:
+                                self.actualizar_stock(
+                                    detalle['codigo_interno'],
+                                    producto['tipo_producto'],
+                                    detalle['cantidad'],
+                                    id_ubicacion=ubicacion['id_ubicacion'],
+                                    costo_unitario=detalle['precio_unitario']
+                                )
+
+                self.connection.commit()
+                logging.info(f"✅ Compra/gasto guardado: {datos_compra['numero_cuenta']}")
+                return True
+
+        except Exception as e:
+            try:
+                self.connection.rollback()
+            except:
+                pass
+            logging.error(f"Error guardando compra/gasto: {e}")
+            return False
+
+    def obtener_ubicacion_por_defecto(self) -> Optional[Dict]:
+        """Obtener la primera ubicación activa como ubicación por defecto"""
+        try:
+            with self.connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT id_ubicacion, nombre
+                    FROM ca_ubicaciones
+                    WHERE activa = TRUE
+                    ORDER BY id_ubicacion
+                    LIMIT 1
+                """)
+                result = cursor.fetchone()
+                return dict(result) if result else None
+        except Exception as e:
+            logging.error(f"Error obteniendo ubicación por defecto: {e}")
+            return None
 
 
 # Ejemplo de uso

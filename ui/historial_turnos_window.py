@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QLineEdit, QSizePolicy, QFrame,
     QComboBox, QDateEdit, QLabel
 )
-from PySide6.QtCore import Qt, Signal, QDate
+from PySide6.QtCore import Qt, Signal, QDate, QTimer
 from PySide6.QtGui import QFont
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -27,7 +27,8 @@ from ui.components import (
     show_warning_dialog,
     show_error_dialog,
     show_success_dialog,
-    aplicar_estilo_fecha
+    aplicar_estilo_fecha,
+    create_page_layout
 )
 
 
@@ -43,170 +44,118 @@ class HistorialTurnosWindow(QWidget):
         self.turnos_data = []
         self.turnos_filtrados = []
         
+        # Timer para detectar entrada del escáner
+        self.scanner_timer = QTimer()
+        self.scanner_timer.setSingleShot(True)
+        self.scanner_timer.setInterval(300)  # 300ms después de que deje de escribir
+        self.scanner_timer.timeout.connect(self.aplicar_filtros)
+        
         self.setup_ui()
         self.cargar_turnos()
     
     def setup_ui(self):
         """Configurar interfaz del historial"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(WindowsPhoneTheme.MARGIN_MEDIUM,
-                                 WindowsPhoneTheme.MARGIN_MEDIUM,
-                                 WindowsPhoneTheme.MARGIN_MEDIUM,
-                                 WindowsPhoneTheme.MARGIN_MEDIUM)
-        layout.setSpacing(WindowsPhoneTheme.MARGIN_SMALL)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         
-        # El título viene del TopBar, no duplicar aquí
-        # title = SectionTitle("")
-        # layout.addWidget(title)
+        # Contenido
+        content = QWidget()
+        content_layout = create_page_layout("")
+        content.setLayout(content_layout)
+        
+        # Buscador
+        self.search_bar = SearchBar("Buscar por usuario...")
+        self.search_bar.connect_search(self.on_search_changed)
+        content_layout.addWidget(self.search_bar)
         
         # Panel de filtros
         filters_panel = self.create_filters_panel()
-        layout.addWidget(filters_panel)
+        content_layout.addWidget(filters_panel)
         
         # Panel para la tabla
         table_panel = self.create_table_panel()
-        layout.addWidget(table_panel)
+        content_layout.addWidget(table_panel)
         
         # Panel de información y botones
         info_buttons_panel = self.create_info_buttons_panel()
-        layout.addLayout(info_buttons_panel)
+        content_layout.addLayout(info_buttons_panel)
+        
+        layout.addWidget(content)
     
     def create_filters_panel(self):
         """Crear el panel de filtros"""
         filters_panel = ContentPanel()
-        filters_layout = QVBoxLayout(filters_panel)
+        filters_layout = QHBoxLayout(filters_panel)
+        filters_layout.setSpacing(WindowsPhoneTheme.MARGIN_MEDIUM)
         
-        # Primera fila de filtros
-        filters_row1 = QHBoxLayout()
-        filters_row1.setSpacing(WindowsPhoneTheme.MARGIN_MEDIUM)
+        # Fecha desde
+        desde_container = QWidget()
+        desde_layout = QVBoxLayout(desde_container)
+        desde_layout.setContentsMargins(0, 0, 0, 0)
+        desde_layout.setSpacing(4)
+        desde_label = StyledLabel("Desde:", size=WindowsPhoneTheme.FONT_SIZE_SMALL)
+        desde_layout.addWidget(desde_label)
+        self.fecha_inicio = QDateEdit()
+        self.fecha_inicio.setDate(QDate.currentDate().addDays(-30))
+        self.fecha_inicio.setCalendarPopup(True)
+        self.fecha_inicio.setMinimumHeight(40)
+        self.fecha_inicio.setFont(QFont(WindowsPhoneTheme.FONT_FAMILY, WindowsPhoneTheme.FONT_SIZE_NORMAL))
+        self.fecha_inicio.dateChanged.connect(self.aplicar_filtros)
+        aplicar_estilo_fecha(self.fecha_inicio)
+        desde_layout.addWidget(self.fecha_inicio)
+        filters_layout.addWidget(desde_container, stretch=1)
         
-        # Buscador
-        self.search_bar = SearchBar("Buscar por usuario...")
-        self.search_bar.connect_search(self.aplicar_filtros)
-        filters_row1.addWidget(self.search_bar, stretch=2)
+        # Fecha hasta
+        hasta_container = QWidget()
+        hasta_layout = QVBoxLayout(hasta_container)
+        hasta_layout.setContentsMargins(0, 0, 0, 0)
+        hasta_layout.setSpacing(4)
+        hasta_label = StyledLabel("Hasta:", size=WindowsPhoneTheme.FONT_SIZE_SMALL)
+        hasta_layout.addWidget(hasta_label)
+        self.fecha_fin = QDateEdit()
+        self.fecha_fin.setDate(QDate.currentDate())
+        self.fecha_fin.setCalendarPopup(True)
+        self.fecha_fin.setMinimumHeight(40)
+        self.fecha_fin.setFont(QFont(WindowsPhoneTheme.FONT_FAMILY, WindowsPhoneTheme.FONT_SIZE_NORMAL))
+        self.fecha_fin.dateChanged.connect(self.aplicar_filtros)
+        aplicar_estilo_fecha(self.fecha_fin)
+        hasta_layout.addWidget(self.fecha_fin)
+        filters_layout.addWidget(hasta_container, stretch=1)
         
         # Filtro por estado
-        estado_container = self.create_estado_filter()
-        filters_row1.addWidget(estado_container, stretch=1)
-        
-        filters_layout.addLayout(filters_row1)
-        
-        # Segunda fila - Rango de fechas
-        filters_row2 = self.create_fecha_filters()
-        filters_layout.addLayout(filters_row2)
-        
-        return filters_panel
-    
-    def create_estado_filter(self):
-        """Crear filtro de estado del turno"""
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(5)
-        
-        label = StyledLabel("Estado:", bold=True)
-        container_layout.addWidget(label)
-        
+        estado_container = QWidget()
+        estado_layout = QVBoxLayout(estado_container)
+        estado_layout.setContentsMargins(0, 0, 0, 0)
+        estado_layout.setSpacing(4)
+        estado_label = StyledLabel("Estado:", size=WindowsPhoneTheme.FONT_SIZE_SMALL)
+        estado_layout.addWidget(estado_label)
         self.estado_combo = QComboBox()
-        self.estado_combo.addItems(["Todos", "Abiertos", "Cerrados"])
-        
-        # Estilo consistente con personal_window
-        input_style = f"""
-            QComboBox {{
-                padding: 8px;
-                border: 2px solid #e5e7eb;
-                border-radius: 4px;
-                font-family: {WindowsPhoneTheme.FONT_FAMILY};
-                font-size: {WindowsPhoneTheme.FONT_SIZE_NORMAL}px;
-                background-color: white;
-            }}
-            QComboBox:focus {{
-                border-color: {WindowsPhoneTheme.TILE_BLUE};
-            }}
-            QComboBox::drop-down {{
-                border: none;
-                width: 30px;
-            }}
-            QComboBox::down-arrow {{
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #666;
-                margin-right: 10px;
-            }}
-        """
-        self.estado_combo.setStyleSheet(input_style)
         self.estado_combo.setMinimumHeight(40)
-        self.estado_combo.currentIndexChanged.connect(self.aplicar_filtros)
-        container_layout.addWidget(self.estado_combo)
-        
-        return container
-    
-    def create_fecha_filters(self):
-        """Crear filtros de rango de fechas"""
-        fecha_layout = QHBoxLayout()
-        fecha_layout.setSpacing(WindowsPhoneTheme.MARGIN_MEDIUM)
-        
-        # Estilo para inputs de fecha
-        input_style = f"""
-            QDateEdit {{
-                padding: 8px;
-                border: 2px solid #e5e7eb;
-                border-radius: 4px;
-                font-family: {WindowsPhoneTheme.FONT_FAMILY};
-                font-size: {WindowsPhoneTheme.FONT_SIZE_NORMAL}px;
-                background-color: white;
-            }}
-            QDateEdit:focus {{
-                border-color: {WindowsPhoneTheme.TILE_BLUE};
-            }}
-        """
-        
-        # Fecha inicio
-        fecha_inicio_container = QWidget()
-        fecha_inicio_layout = QVBoxLayout(fecha_inicio_container)
-        fecha_inicio_layout.setContentsMargins(0, 0, 0, 0)
-        fecha_inicio_layout.setSpacing(5)
-        
-        label_inicio = StyledLabel("Desde:", bold=True)
-        fecha_inicio_layout.addWidget(label_inicio)
-        
-        self.fecha_inicio = QDateEdit()
-        self.fecha_inicio.setCalendarPopup(True)
-        self.fecha_inicio.setDate(QDate.currentDate().addDays(-30))
-        aplicar_estilo_fecha(self.fecha_inicio)
-        self.fecha_inicio.setMinimumHeight(40)
-        self.fecha_inicio.dateChanged.connect(self.aplicar_filtros)
-        fecha_inicio_layout.addWidget(self.fecha_inicio)
-        
-        fecha_layout.addWidget(fecha_inicio_container, stretch=1)
-        
-        # Fecha fin
-        fecha_fin_container = QWidget()
-        fecha_fin_layout = QVBoxLayout(fecha_fin_container)
-        fecha_fin_layout.setContentsMargins(0, 0, 0, 0)
-        fecha_fin_layout.setSpacing(5)
-        
-        label_fin = StyledLabel("Hasta:", bold=True)
-        fecha_fin_layout.addWidget(label_fin)
-        
-        self.fecha_fin = QDateEdit()
-        self.fecha_fin.setCalendarPopup(True)
-        self.fecha_fin.setDate(QDate.currentDate())
-        aplicar_estilo_fecha(self.fecha_fin)
-        self.fecha_fin.setMinimumHeight(40)
-        self.fecha_fin.dateChanged.connect(self.aplicar_filtros)
-        fecha_fin_layout.addWidget(self.fecha_fin)
-        
-        fecha_layout.addWidget(fecha_fin_container, stretch=1)
+        self.estado_combo.setFont(QFont(WindowsPhoneTheme.FONT_FAMILY, WindowsPhoneTheme.FONT_SIZE_NORMAL))
+        self.estado_combo.addItems(["Todos", "Abiertos", "Cerrados"])
+        self.estado_combo.setCurrentIndex(0)
+        self.estado_combo.currentTextChanged.connect(self.aplicar_filtros)
+        estado_layout.addWidget(self.estado_combo)
+        filters_layout.addWidget(estado_container, stretch=1)
         
         # Botón limpiar filtros
-        btn_limpiar = TileButton("Limpiar", "fa5s.eraser", WindowsPhoneTheme.TILE_ORANGE)
-        btn_limpiar.setMaximumHeight(90)
+        btn_limpiar_container = QWidget()
+        btn_limpiar_layout = QVBoxLayout(btn_limpiar_container)
+        btn_limpiar_layout.setContentsMargins(0, 0, 0, 0)
+        btn_limpiar_layout.setSpacing(4)
+        limpiar_spacer = StyledLabel("", size=WindowsPhoneTheme.FONT_SIZE_SMALL)
+        btn_limpiar_layout.addWidget(limpiar_spacer)
+        btn_limpiar = QPushButton("Limpiar")
+        btn_limpiar.setMinimumHeight(40)
+        btn_limpiar.setMinimumWidth(100)
+        btn_limpiar.setObjectName("tileButton")
+        btn_limpiar.setProperty("tileColor", WindowsPhoneTheme.TILE_ORANGE)
         btn_limpiar.clicked.connect(self.limpiar_filtros)
-        fecha_layout.addWidget(btn_limpiar, stretch=1)
+        btn_limpiar_layout.addWidget(btn_limpiar)
+        filters_layout.addWidget(btn_limpiar_container)
         
-        return fecha_layout
+        return filters_panel
     
     def create_table_panel(self):
         """Crear panel con la tabla de turnos"""
@@ -311,9 +260,10 @@ class HistorialTurnosWindow(QWidget):
                     tc.fecha_apertura,
                     tc.fecha_cierre,
                     tc.monto_inicial,
+                    tc.total_efectivo,
                     tc.monto_esperado_efectivo,
-                    tc.monto_real_efectivo,
-                    tc.diferencia_efectivo,
+                    tc.monto_real_efectivo as monto_real_cierre,
+                    tc.diferencia_efectivo as diferencia,
                     tc.cerrado,
                     u.nombre_completo as nombre_usuario,
                     u.nombre_usuario as username
@@ -333,12 +283,13 @@ class HistorialTurnosWindow(QWidget):
                         'fecha_apertura': turno[2],
                         'fecha_cierre': turno[3],
                         'monto_inicial': turno[4],
-                        'monto_esperado_efectivo': turno[5],
-                        'monto_real_efectivo': turno[6],
-                        'diferencia_efectivo': turno[7],
-                        'cerrado': turno[8],
-                        'nombre_usuario': turno[9] or 'N/A',
-                        'username': turno[10]
+                        'total_efectivo': turno[5],
+                        'monto_esperado_efectivo': turno[6],
+                        'monto_real_cierre': turno[7],
+                        'diferencia': turno[8],
+                        'cerrado': turno[9],
+                        'nombre_usuario': turno[10] or 'N/A',
+                        'username': turno[11]
                     }
                 else:
                     turno_dict = turno
@@ -351,6 +302,10 @@ class HistorialTurnosWindow(QWidget):
         except Exception as e:
             logging.error(f"Error cargando turnos: {e}")
             show_error_dialog(self, "Error", f"No se pudieron cargar los turnos: {e}")
+    
+    def on_search_changed(self, text):
+        """Reiniciar timer cuando cambia el texto de búsqueda"""
+        self.scanner_timer.start()
     
     def aplicar_filtros(self):
         """Aplicar filtros a los datos de turnos"""
@@ -440,11 +395,11 @@ class HistorialTurnosWindow(QWidget):
             self.tabla_turnos.setItem(row_idx, 4, QTableWidgetItem(monto_inicial))
             
             # Ventas efectivo
-            ventas = f"${float(turno['total_ventas_efectivo']):.2f}" if turno['total_ventas_efectivo'] is not None else "$0.00"
+            ventas = f"${float(turno['total_efectivo']):.2f}" if turno['total_efectivo'] is not None else "$0.00"
             self.tabla_turnos.setItem(row_idx, 5, QTableWidgetItem(ventas))
             
             # Monto esperado
-            esperado = f"${float(turno['monto_esperado']):.2f}" if turno['monto_esperado'] is not None else "$0.00"
+            esperado = f"${float(turno['monto_esperado_efectivo']):.2f}" if turno['monto_esperado_efectivo'] is not None else "$0.00"
             self.tabla_turnos.setItem(row_idx, 6, QTableWidgetItem(esperado))
             
             # Monto real
@@ -525,8 +480,8 @@ class HistorialTurnosWindow(QWidget):
             else:
                 fecha_cierre_str = "N/A"
             detalles += f"Fecha: {fecha_cierre_str}\n"
-            detalles += f"Ventas en efectivo: ${float(turno['total_ventas_efectivo']):.2f}\n"
-            detalles += f"Monto esperado: ${float(turno['monto_esperado']):.2f}\n"
+            detalles += f"Ventas en efectivo: ${float(turno['total_efectivo']):.2f}\n"
+            detalles += f"Monto esperado: ${float(turno['monto_esperado_efectivo']):.2f}\n"
             detalles += f"Monto real: ${float(turno['monto_real_cierre']):.2f}\n"
             
             diferencia = float(turno['diferencia'])

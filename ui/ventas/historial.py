@@ -292,13 +292,29 @@ class HistorialVentasWindow(QWidget):
             fecha_desde = self.fecha_desde.date().toPython()
             fecha_hasta = self.fecha_hasta.date().toPython()
             
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).gte('fecha', f'{fecha_desde}T00:00:00').lte(
-                'fecha', f'{fecha_hasta}T23:59:59'
-            ).order('fecha', desc=True).execute()
+            # Usar consulta PostgreSQL en lugar de Supabase
+            ventas = self.pg_manager.query("""
+                SELECT 
+                    v.id_venta,
+                    v.fecha,
+                    v.total,
+                    u.nombre_completo as nombre_usuario
+                FROM ventas v
+                LEFT JOIN usuarios u ON v.id_vendedor = u.id_usuario
+                WHERE v.fecha >= %s AND v.fecha <= %s
+                ORDER BY v.fecha DESC
+            """, (fecha_desde, fecha_hasta))
             
-            self.ventas_data = response.data or []
+            # Convertir a formato esperado por el código
+            self.ventas_data = []
+            for venta in ventas:
+                venta_dict = {
+                    'id_venta': venta['id_venta'],
+                    'fecha': venta['fecha'],
+                    'total': venta['total'],
+                    'usuarios': {'nombre_completo': venta['nombre_usuario']} if venta['nombre_usuario'] else None
+                }
+                self.ventas_data.append(venta_dict)
             
             # Cargar usuarios para el filtro
             self.cargar_usuarios_filtro()
@@ -439,11 +455,14 @@ class HistorialVentasWindow(QWidget):
     def ver_detalles(self, venta_id):
         """Ver detalles de una venta"""
         try:
-            response = self.pg_manager.client.table('detalles_venta').select(
-                'codigo_interno, tipo_producto, cantidad, precio_unitario, subtotal_linea, nombre_producto, descripcion_producto'
-            ).eq('id_venta', venta_id).execute()
-            
-            detalles = response.data or []
+            # Usar consulta PostgreSQL en lugar de Supabase
+            detalles = self.pg_manager.query("""
+                SELECT 
+                    codigo_interno, tipo_producto, cantidad, precio_unitario, 
+                    subtotal_linea, nombre_producto, descripcion_producto
+                FROM detalles_venta
+                WHERE id_venta = %s
+            """, (venta_id,))
             
             if not detalles:
                 show_info_dialog(self, "Detalles", f"No se encontraron detalles para la venta ID: {venta_id}")
@@ -487,14 +506,29 @@ class HistorialVentasWindow(QWidget):
             fecha_desde = self.fecha_desde.date().toPython()
             fecha_hasta = self.fecha_hasta.date().toPython()
             
-            # Obtener datos de ventas desde Supabase
-            response = self.pg_manager.client.table('ventas').select(
-                'id_venta, fecha, total, usuarios(nombre_completo)'
-            ).gte('fecha', f'{fecha_desde}T00:00:00').lte(
-                'fecha', f'{fecha_hasta}T23:59:59'
-            ).order('fecha', desc=True).execute()
+            # Obtener datos de ventas usando PostgreSQL
+            ventas_raw = self.pg_manager.query("""
+                SELECT 
+                    v.id_venta,
+                    v.fecha,
+                    v.total,
+                    u.nombre_completo as nombre_usuario
+                FROM ventas v
+                LEFT JOIN usuarios u ON v.id_vendedor = u.id_usuario
+                WHERE v.fecha >= %s AND v.fecha <= %s
+                ORDER BY v.fecha DESC
+            """, (fecha_desde, fecha_hasta))
             
-            ventas = response.data or []
+            # Convertir a formato esperado
+            ventas = []
+            for venta in ventas_raw:
+                venta_dict = {
+                    'id_venta': venta['id_venta'],
+                    'fecha': venta['fecha'],
+                    'total': venta['total'],
+                    'usuarios': {'nombre_completo': venta['nombre_usuario']} if venta['nombre_usuario'] else None
+                }
+                ventas.append(venta_dict)
             
             # Crear libro de Excel
             wb = Workbook()

@@ -48,7 +48,6 @@ from ui.inventario_window import InventarioWindow
 from ui.cuentas_por_pagar_window import CuentasPorPagarWindow
 from ui.nueva_compra_window import NuevaCompraWindow
 from ui.nuevo_producto_window import NuevoProductoWindow
-from ui.nuevo_cliente_window import NuevoClienteWindow
 from ui.productos_window import ProductosWindow
 from ui.proveedores_window import ProveedoresWindow
 from ui.clientes_window import ClientesWindow
@@ -58,7 +57,6 @@ from ui.historial_turnos_window import HistorialTurnosWindow
 from ui.asignacion_turnos_window import AsignacionTurnosWindow
 from ui.ubicaciones_window import UbicacionesWindow
 from ui.movimiento_inventario_window import MovimientoInventarioWindow
-from ui.cuentas_por_cobrar_window import CuentasPorCobrarWindow
 from database.postgres_manager import PostgresManager
 
 
@@ -152,9 +150,9 @@ class MainPOSWindow(QMainWindow):
         # Definir pestañas con iconos y colores
         tabs = [
             {"name": "Punto de Venta", "icon": "fa5s.shopping-cart", "color": WindowsPhoneTheme.TILE_RED, "index": 0},
-            {"name": "Ventas, Descuentos\ny Promociones", "icon": "fa5s.percentage", "color": WindowsPhoneTheme.TILE_ORANGE, "index": 1},
+            {"name": "Ventas", "icon": "fa5s.list-alt", "color": WindowsPhoneTheme.TILE_ORANGE, "index": 1},
             {"name": "Inventario", "icon": "fa5s.boxes", "color": WindowsPhoneTheme.TILE_GREEN, "index": 2},
-            {"name": "Compras y Gastos", "icon": "fa5s.shopping-bag", "color": WindowsPhoneTheme.TILE_ORANGE, "index": 3},
+            {"name": "Compras y Gastos", "icon": "fa5s.shopping-bag", "color": WindowsPhoneTheme.TILE_TEAL, "index": 3},
             {"name": "Clientes", "icon": "fa5s.users", "color": WindowsPhoneTheme.TILE_BLUE, "index": 4},
             {"name": "Admin/Config", "icon": "fa5s.cogs", "color": WindowsPhoneTheme.TILE_PURPLE, "index": 5},
         ]
@@ -214,9 +212,9 @@ class MainPOSWindow(QMainWindow):
         self.stacked_widget.addWidget(page)
         
     def create_inventory_page(self):
-        """Página de ventas, descuentos y promociones usando TileButton"""
+        """Página de ventas usando TileButton"""
         page = QWidget()
-        layout = create_page_layout("VENTAS, DESCUENTOS Y PROMOCIONES")
+        layout = create_page_layout("VENTAS")
         page.setLayout(layout)
         
         # Grid de tiles
@@ -226,12 +224,8 @@ class MainPOSWindow(QMainWindow):
             {"text": "Historial\nVentas", "icon": "fa5s.history", "color": WindowsPhoneTheme.TILE_PURPLE, "callback": self.abrir_historial},
             {"text": "Cancelaciones", "icon": "fa5s.times-circle", "color": WindowsPhoneTheme.TILE_RED, "callback": self.show_mock_dialog},
             {"text": "Ventas a\nCrédito", "icon": "fa5s.credit-card", "color": WindowsPhoneTheme.TILE_BLUE, "callback": self.show_mock_dialog},
-            {"text": "Reglas de\nDescuento", "icon": "fa5s.percentage", "color": WindowsPhoneTheme.TILE_ORANGE, "callback": self.show_mock_dialog},
-            {"text": "Cupones\ny Vales", "icon": "fa5s.ticket-alt", "color": WindowsPhoneTheme.TILE_GREEN, "callback": self.show_mock_dialog},
-            {"text": "Promociones\nTemporales", "icon": "fa5s.clock", "color": WindowsPhoneTheme.TILE_TEAL, "callback": self.show_mock_dialog},
-            {"text": "Descuentos\npor Rol", "icon": "fa5s.user-tag", "color": WindowsPhoneTheme.TILE_MAGENTA, "callback": self.show_mock_dialog},
-            {"text": "Reportes de\nDescuento", "icon": "fa5s.chart-pie", "color": WindowsPhoneTheme.TILE_BLUE, "callback": self.show_mock_dialog},
-            {"text": "Estadísticas", "icon": "fa5s.chart-line", "color": WindowsPhoneTheme.TILE_RED, "callback": self.show_mock_dialog},
+            {"text": "Reporte\nVendedores", "icon": "fa5s.chart-bar", "color": WindowsPhoneTheme.TILE_GREEN, "callback": self.show_mock_dialog},
+            {"text": "Estadísticas", "icon": "fa5s.chart-line", "color": WindowsPhoneTheme.TILE_ORANGE, "callback": self.show_mock_dialog},
         ]
         
         # Agregar los botones al grid
@@ -280,7 +274,38 @@ class MainPOSWindow(QMainWindow):
         layout.addStretch()
         
         self.stacked_widget.addWidget(page)
-
+    
+    def create_tab5_page(self):
+        """Página de clientes usando TileButton"""
+        page = QWidget()
+        layout = create_page_layout("CLIENTES")
+        page.setLayout(layout)
+        
+        # Grid de tiles
+        grid = create_tile_grid_layout()
+        
+        actions = [
+            {"text": "Directorio", "icon": "fa5s.address-book", "color": WindowsPhoneTheme.TILE_BLUE, "callback": self.abrir_clientes},
+            {"text": "Nuevo\nCliente", "icon": "fa5s.user-plus", "color": WindowsPhoneTheme.TILE_GREEN, "callback": self.show_mock_dialog},
+            {"text": "Cuentas por\nCobrar", "icon": "fa5s.money-bill-wave", "color": WindowsPhoneTheme.TILE_ORANGE, "callback": self.show_mock_dialog},
+            {"text": "Cobros", "icon": "fa5s.hand-holding-usd", "color": WindowsPhoneTheme.TILE_PURPLE, "callback": self.show_mock_dialog},
+            {"text": "Historial", "icon": "fa5s.history", "color": WindowsPhoneTheme.TILE_TEAL, "callback": self.show_mock_dialog},
+        ]
+        
+        # Agregar los botones al grid
+        for i, action in enumerate(actions):
+            btn = TileButton(action["text"], action["icon"], action["color"])
+            if action["callback"]:
+                btn.clicked.connect(action["callback"])
+            row = i // 3
+            col = i % 3
+            grid.addWidget(btn, row, col)
+        
+        layout.addLayout(grid)
+        layout.addStretch()
+        
+        self.stacked_widget.addWidget(page)
+        
     def create_config_page(self):
         """Página de administración y configuración usando TileButton"""
         page = QWidget()
@@ -293,30 +318,54 @@ class MainPOSWindow(QMainWindow):
         # Solo mostrar si es administrador
         if self.user_data['rol'] in ['administrador', 'sistemas']:
             # Fila 1 - Funcionalidades administrativas
+            btn_personal = TileButton("Gestionar\nProveedores", "fa5s.truck", WindowsPhoneTheme.TILE_GREEN)
+            btn_personal.clicked.connect(self.abrir_gestion_proveedores)
+            grid.addWidget(btn_personal, 0, 0)
+            
+            btn_dias_festivos = TileButton("Cuentas por\nPagar", "fa5s.file-invoice-dollar", WindowsPhoneTheme.TILE_BLUE)
+            btn_dias_festivos.clicked.connect(self.abrir_dias_festivos)
+            grid.addWidget(btn_dias_festivos, 0, 1)
+            
             btn_historial_turnos = TileButton("Historial\nTurnos", "fa5s.cash-register", WindowsPhoneTheme.TILE_TEAL)
             btn_historial_turnos.clicked.connect(self.abrir_historial_turnos)
-            grid.addWidget(btn_historial_turnos, 0, 0)
+            grid.addWidget(btn_historial_turnos, 0, 2)
             
             btn_asignar_turnos = TileButton("Asignar\nTurnos", "fa5s.calendar-check", WindowsPhoneTheme.TILE_ORANGE)
             btn_asignar_turnos.clicked.connect(self.abrir_asignacion_turnos)
-            grid.addWidget(btn_asignar_turnos, 0, 1)
+            grid.addWidget(btn_asignar_turnos, 0, 3)
             
+            # Fila 2 - Más admin
             btn_ubicaciones = TileButton("Gestionar\nUbicaciones", "fa5s.warehouse", WindowsPhoneTheme.TILE_BLUE)
             btn_ubicaciones.clicked.connect(self.abrir_gestion_ubicaciones)
-            grid.addWidget(btn_ubicaciones, 0, 2)
+            grid.addWidget(btn_ubicaciones, 1, 0)
             
-            # Fila 2 - Configuración
+            btn_catalogo_lockers = TileButton("Catálogo\nde Clientes", "fa5s.users", WindowsPhoneTheme.TILE_TEAL)
+            btn_catalogo_lockers.clicked.connect(self.abrir_catalogo_lockers)
+            grid.addWidget(btn_catalogo_lockers, 1, 1)
+            
+            btn_historial_ventas = TileButton("Historial\nVentas", "fa5s.history", WindowsPhoneTheme.TILE_PURPLE)
+            btn_historial_ventas.clicked.connect(self.abrir_historial)
+            grid.addWidget(btn_historial_ventas, 1, 2)
+            
+            btn_historial_lockers = TileButton("Historial\nLockers", "fa5s.key", WindowsPhoneTheme.TILE_MAGENTA)
+            btn_historial_lockers.clicked.connect(self.abrir_historial_lockers)
+            grid.addWidget(btn_historial_lockers, 1, 3)
+            
+            # Fila 3 - Configuración
             btn_change_password = TileButton("Cambiar\nContraseña", "fa5s.lock", WindowsPhoneTheme.TILE_ORANGE)
             btn_change_password.clicked.connect(self.cambiar_contrasena)
-            grid.addWidget(btn_change_password, 1, 0)
+            grid.addWidget(btn_change_password, 2, 0)
+            
+            btn_sync = TileButton("Sincronizar", "fa5s.sync", WindowsPhoneTheme.TILE_BLUE)
+            grid.addWidget(btn_sync, 2, 1)
             
             btn_tipos_cxp = TileButton("Catálogo\nTipos CxP", "fa5s.file-invoice-dollar", WindowsPhoneTheme.TILE_TEAL)
             btn_tipos_cxp.clicked.connect(self.abrir_catalogo_tipos_cxp)
-            grid.addWidget(btn_tipos_cxp, 1, 1)
+            grid.addWidget(btn_tipos_cxp, 2, 2)
             
             btn_logout = TileButton("Cerrar\nSesión", "fa5s.sign-out-alt", WindowsPhoneTheme.TILE_RED)
             btn_logout.clicked.connect(self.handle_logout)
-            grid.addWidget(btn_logout, 1, 2)
+            grid.addWidget(btn_logout, 2, 3)
         else:
             # Si no es administrador, mostrar mensaje
             no_access_label = StyledLabel(
@@ -344,8 +393,8 @@ class MainPOSWindow(QMainWindow):
         
         actions = [
             {"text": "Directorio", "icon": "fa5s.address-book", "color": WindowsPhoneTheme.TILE_BLUE, "callback": self.abrir_clientes},
-            {"text": "Nuevo\nCliente", "icon": "fa5s.user-plus", "color": WindowsPhoneTheme.TILE_GREEN, "callback": self.abrir_nuevo_cliente},
-            {"text": "Cuentas por\nCobrar", "icon": "fa5s.money-bill-wave", "color": WindowsPhoneTheme.TILE_ORANGE, "callback": self.abrir_cuentas_por_cobrar},
+            {"text": "Nuevo\nCliente", "icon": "fa5s.user-plus", "color": WindowsPhoneTheme.TILE_GREEN, "callback": self.show_mock_dialog},
+            {"text": "Cuentas por\nCobrar", "icon": "fa5s.money-bill-wave", "color": WindowsPhoneTheme.TILE_ORANGE, "callback": self.show_mock_dialog},
             {"text": "Cobros", "icon": "fa5s.hand-holding-usd", "color": WindowsPhoneTheme.TILE_PURPLE, "callback": self.show_mock_dialog},
             {"text": "Historial", "icon": "fa5s.history", "color": WindowsPhoneTheme.TILE_TEAL, "callback": self.show_mock_dialog},
         ]
@@ -963,57 +1012,6 @@ class MainPOSWindow(QMainWindow):
         except Exception as e:
             logging.error(f"Error abriendo asignación de turnos: {e}")
     
-    def abrir_cuentas_por_cobrar(self):
-        """Abrir widget de cuentas por cobrar"""
-        try:
-            # Actualizar título de la barra superior
-            self.top_bar.set_title("CUENTAS POR COBRAR")
-            
-            # Ocultar barra de navegación
-            self.nav_bar.hide()
-            
-            # Crear widget de cuentas por cobrar
-            cuentas_widget = CuentasPorCobrarWindow(self.pg_manager, self.user_data)
-            
-            # Conectar señal de cierre para volver a clientes (pestaña 4)
-            cuentas_widget.cerrar_solicitado.connect(self.volver_a_clientes)
-            
-            # Agregar al stack y mostrar
-            self.stacked_widget.addWidget(cuentas_widget)
-            self.stacked_widget.setCurrentWidget(cuentas_widget)
-            
-            # Forzar actualización del layout
-            QTimer.singleShot(0, self.update_layout)
-            
-            logging.info("Abriendo cuentas por cobrar")
-            
-        except Exception as e:
-            logging.error(f"Error abriendo cuentas por cobrar: {e}")
-            show_error_dialog(self, "Error", f"No se pudo abrir las cuentas por cobrar: {e}")
-    
-    def volver_a_clientes(self):
-        """Volver a la página de clientes"""
-        # Restaurar título
-        self.top_bar.set_title("PUNTO CLAVE")
-        
-        # Mostrar barra de navegación
-        self.nav_bar.show()
-        
-        # Cambiar a la página de clientes (índice 4)
-        self.stacked_widget.setCurrentIndex(4)
-        self.switch_tab(4)
-        
-        # Obtener el widget actual
-        current_widget = self.stacked_widget.currentWidget()
-        
-        # Remover el widget temporal del stack después de un momento
-        QTimer.singleShot(100, lambda: self.remover_widget_temporal(current_widget))
-        
-        # Forzar actualización del layout
-        QTimer.singleShot(0, self.update_layout)
-        
-        logging.info("Volviendo a página de clientes")
-    
     def abrir_gestion_ubicaciones(self):
         """Abrir widget de gestión de ubicaciones"""
         try:
@@ -1508,40 +1506,6 @@ class MainPOSWindow(QMainWindow):
         except Exception as e:
             logging.error(f"Error volviendo a compras y gastos: {e}")
     
-    def abrir_nuevo_cliente(self):
-        """Abrir formulario de nuevo cliente"""
-        try:
-            logging.info("Abriendo formulario de nuevo cliente...")
-            
-            # Ocultar barra de navegación
-            self.nav_bar.hide()
-            logging.info("Barra de navegación oculta")
-            
-            # Crear formulario de nuevo cliente sin parent inicialmente
-            cliente_window = NuevoClienteWindow(self.pg_manager, self.user_data, parent=None)
-            logging.info("NuevoClienteWindow creada")
-            
-            cliente_window.cerrar_solicitado.connect(self.volver_a_clientes)
-            cliente_window.cliente_guardado.connect(self.on_cliente_guardado)
-            logging.info("Conexiones de señales establecidas")
-            
-            # Agregar al stacked widget y mostrar
-            self.stacked_widget.addWidget(cliente_window)
-            logging.info("Widget agregado al stacked_widget")
-            
-            self.stacked_widget.setCurrentWidget(cliente_window)
-            logging.info("Widget establecido como current")
-            
-            # Cambiar título
-            self.top_bar.set_title("NUEVO CLIENTE")
-            logging.info("Título cambiado")
-            
-            logging.info("Formulario de nuevo cliente abierto")
-            
-        except Exception as e:
-            logging.error(f"Error abriendo nuevo cliente: {e}")
-            show_error_dialog(self, "Error", f"No se pudo abrir el formulario de nuevo cliente:\n{str(e)}")
-    
     def volver_a_clientes(self):
         """Volver a la página de clientes"""
         try:
@@ -1556,11 +1520,6 @@ class MainPOSWindow(QMainWindow):
             
         except Exception as e:
             logging.error(f"Error volviendo a clientes: {e}")
-    
-    def on_cliente_guardado(self, cliente_data):
-        """Manejar cuando se guarda un cliente"""
-        logging.info(f"Cliente guardado: {cliente_data.get('codigo', 'N/A')}")
-        # Aquí se podría actualizar alguna lista o estadística si fuera necesario
     
     def abrir_clientes(self):
         """Abrir ventana de directorio de clientes"""

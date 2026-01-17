@@ -1,5 +1,5 @@
 """
-Aplicación Principal del POS HTF Gimnasio
+Aplicación Principal del Punto Clave POS
 Sistema de Punto de Venta con sincronización offline
 Usando PySide6 para la interfaz
 """
@@ -88,7 +88,7 @@ class POSApplication:
         try:
             # Crear aplicación Qt
             self.app = QApplication(sys.argv)
-            self.app.setApplicationName("POS HTF Gimnasio")
+            self.app.setApplicationName("Punto Clave")
             
             # CONFIGURACIÓN DE FUENTES PARA EVITAR ERRORES DE DIRECTWRITE
             # Configurar fuentes seguras para evitar problemas con fuentes corruptas del sistema
